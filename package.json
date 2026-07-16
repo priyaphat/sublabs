@@ -1,0 +1,19 @@
+{
+  "name": "sublabs-local",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server.mjs",
+    "start": "node server.mjs",
+    "test": "node --test",
+    "test:quality": "node scripts/evaluate-quality.mjs",
+    "test:api": "node scripts/api-smoke.mjs"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
+    "multer": "^2.0.2"
+  }
+}

@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {extractTimedTokens} from '../lib/whisper.mjs';
+test('verbose_json words become timed tokens',()=>{const tokens=extractTimedTokens({segments:[{words:[{word:' subtit',start:1.3,end:1.78,probability:.8},{word:'le',start:1.78,end:1.92,probability:.99}]}]});assert.deepEqual(tokens.map(x=>x.text),[' subtit','le']);assert.equal(tokens[1].end,1.92)});
+test('high no-speech hallucinations are removed',()=>{const tokens=extractTimedTokens({segments:[{text:' random words',no_speech_prob:.91,avg_logprob:-.8,words:[{word:' random',start:0,end:1,probability:.8}]}]});assert.equal(tokens.length,0)});
+test('low-confidence words in noise are removed',()=>{const tokens=extractTimedTokens({segments:[{text:'noise',avg_logprob:-1.2,no_speech_prob:0,words:[{word:'หลอน',start:38,end:40,probability:.24}]}]});assert.deepEqual(tokens,[])});

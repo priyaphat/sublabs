@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SubLabs Local</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/animation.css">
+  <link rel="stylesheet" href="/editor.css">
+</head>
+<body>
+<header>
+  <div class="brand">SUBLABS <span>LOCAL</span></div>
+  <div id="projectBar" class="project-bar hidden"><button id="backHome" class="icon-button secondary" type="button" title="กลับหน้าโปรเจกต์">←</button><strong id="projectName"></strong><span id="saveStatus" role="status">บันทึกแล้ว</span></div>
+  <div class="privacy"><span aria-hidden="true">●</span> ประมวลผลบนเครื่อง · 127.0.0.1</div>
+</header>
+<main>
+  <section id="drop" class="drop" aria-labelledby="dropTitle">
+    <input id="file" type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" hidden>
+    <div class="upload-icon" aria-hidden="true">＋</div><h1 id="dropTitle">วางวิดีโอของคุณที่นี่</h1>
+    <p>MP4, MOV, WebM, MKV · สูงสุด 2GB / 4 ชั่วโมง · ไฟล์ไม่ออกจากเครื่อง</p>
+    <button id="pick" type="button">เลือกวิดีโอ</button><p id="uploadError" class="error" role="alert"></p>
+    <section id="recentSection" class="recent hidden" aria-labelledby="recentTitle"><h2 id="recentTitle">โปรเจกต์ล่าสุด</h2><div id="recentProjects"></div></section>
+  </section>
+  <section id="studio" class="studio hidden">
+    <aside class="transcript-panel" aria-label="คำบรรยาย">
+      <div class="panel-head"><h2>คำบรรยาย</h2><div class="history-tools"><button id="undo" type="button" title="Undo (Ctrl+Z)" disabled>↶</button><button id="redo" type="button" title="Redo (Ctrl+Shift+Z)" disabled>↷</button></div></div>
+      <div class="transcribe-options">
+        <label>ภาษา<select id="lang"><option value="th">ภาษาไทย</option><option value="en">English</option><option value="auto">อัตโนมัติ</option></select></label>
+        <label title="ระบบอาจยืดเล็กน้อยเพื่อไม่ตัดกลางวรรค">เป้าหมายคำต่อวรรค<select id="wordCount"><option value="1">1</option><option value="3">3</option><option value="5" selected>5</option><option value="7">7</option><option value="10">10</option></select></label>
+        <label>โหมดประมวลผล<select id="quality"><option value="accurate">Accurate GPU</option><option value="balanced">Balanced Auto</option><option value="fast">Fast CPU</option></select></label>
+        <label class="wide">คำศัพท์เฉพาะ / ภาษาถิ่น<input id="glossary" type="text" maxlength="2000" placeholder="เช่น SubLabs, ลำปาง, คำเมือง (คั่นด้วยจุลภาค)"></label>
+      </div>
+      <div class="action-row"><button id="transcribe" type="button">ถอดเสียงโหมดแม่นยำ</button><button id="cancelJob" class="secondary hidden" type="button">ยกเลิก</button></div>
+      <div id="processing" class="processing hidden" role="status" aria-live="polite"><div class="ai-orb" aria-hidden="true"><i></i><i></i><i></i></div><strong id="processLabel">กำลังเตรียมระบบ</strong><small id="processTime">00:00</small><div id="progressTrack" class="progress-track"><span id="processBar"></span></div><p id="queueLabel"></p></div>
+      <section id="reviewQueue" class="review-queue hidden" aria-label="คิวคำที่ควรตรวจ"><div class="review-head"><strong>ควรตรวจ <span id="reviewCount">0</span> คำ</strong><select id="reviewSpeed" aria-label="ความเร็วเล่นซ้ำ"><option value="1">1×</option><option value="0.75">0.75×</option></select></div><p class="review-hint">แก้คำตรงนี้ได้เลย แล้วกด Enter เพื่อไปคำถัดไป</p><button id="reviewCurrent" class="review-current secondary" type="button" title="ฟังช่วงนี้อีกครั้ง"></button><label class="review-edit-label">แก้คำ<input id="reviewEdit" type="text" maxlength="300" autocomplete="off" spellcheck="true"></label><div class="review-actions"><button id="reviewPrev" class="secondary small" type="button">ก่อนหน้า</button><button id="reviewApprove" type="button">ยืนยันและถัดไป</button><button id="reviewNext" class="secondary small" type="button">ถัดไป</button></div></section>
+      <div id="captions" class="captions" aria-live="polite"></div>
+    </aside>
+    <section class="workspace" aria-label="ตัวอย่างและ timeline">
+      <div class="preview"><div id="videoFrame" class="video-frame"><video id="video" controls preload="metadata"></video><div id="safeGuide" class="safe-guide" aria-hidden="true"></div><div id="captionPreview" class="caption-preview" aria-hidden="true"></div></div></div>
+      <div class="timeline-toolbar">
+        <strong>Word Timeline</strong>
+        <div class="timeline-actions"><button id="zoomFit" class="secondary small" type="button">พอดีจอ</button><label>Zoom <input id="zoom" type="range" min="20" max="240" value="80"><output id="zoomValue">80 px/s</output></label><label class="check-inline"><input id="snap" type="checkbox" checked> Snap</label></div>
+      </div>
+      <div class="edit-toolbar" aria-label="เครื่องมือแก้เวลา"><span id="selectionLabel">ยังไม่ได้เลือกคำ</span><button id="nudgeBack" class="secondary small" type="button" disabled>−50 ms</button><button id="nudgeForward" class="secondary small" type="button" disabled>+50 ms</button><button id="splitWord" class="secondary small" type="button" disabled>แยกคำ</button><button id="mergeWords" class="secondary small" type="button" disabled>รวมคำ</button></div>
+      <div class="workflow-toolbar"><button id="retryRange" class="secondary small" type="button" disabled>ถอดใหม่ช่วงที่เลือก</button><button id="autoReflow" class="secondary small" type="button">จัดชุดอัตโนมัติ</button><input id="subtitleFile" type="file" accept=".srt,.vtt,text/vtt,application/x-subrip" hidden><button id="importSubtitle" class="secondary small" type="button">นำเข้า SRT/VTT</button><label>เลื่อนเวลา <input id="shiftMs" type="number" step="50" value="0" aria-label="เลื่อนเวลามิลลิวินาที"> ms</label><button id="applyShift" class="secondary small" type="button">ใช้</button></div>
+      <div id="timelineScroll" class="timeline-scroll"><div id="timeline" class="timeline"><canvas id="ruler" height="24"></canvas><canvas id="waveform" height="88"></canvas><div id="rangeSelection" class="range-selection hidden"></div><div id="playhead"></div><div id="wordTrack" class="word-track"></div></div></div>
+      <p class="timeline-help">คลิกเลือก · Ctrl+คลิกเลือกหลายคำ · ลากกลางคำเพื่อเลื่อน · ลากขอบเพื่อปรับเวลา · Space เล่น/หยุด</p>
+    </section>
+    <aside class="styles" aria-label="Essential Graphics">
+      <div class="panel-head"><h2>Essential Graphics</h2><button id="resetStyle" class="secondary" type="button">Reset</button></div>
+      <details open><summary>Presets</summary><div class="presets" aria-label="Style presets"><button data-preset="viral">Viral Pop</button><button data-preset="clean">Clean</button><button data-preset="bold">Bold Lime</button><button data-preset="karaoke">Karaoke</button><button data-preset="news">News</button><button data-preset="cinema">Cinema</button></div></details>
+      <details open><summary>การแสดงและ Animation</summary><div class="inspector-group">
+        <label>รูปแบบการแสดง<select id="effect"><option value="sentence">แสดงทั้งชุด</option><option value="word">Current Word</option><option value="progressive">Progressive Reveal</option><option value="karaoke">Karaoke Highlight</option></select></label>
+        <label>Animation<select id="animation"><option value="none">None</option><option value="pop">Pop</option><option value="bounce">Bounce</option><option value="fade">Fade</option></select></label>
+        <label>ระยะเวลา <span class="range-pair"><input id="animationDuration" type="range" min="80" max="1000" step="10" value="220"><input data-number-for="animationDuration" type="number" min="80" max="1000" step="10" value="220"></span></label>
+        <label>ความแรง <span class="range-pair"><input id="animationIntensity" type="range" min="20" max="180" value="100"><input data-number-for="animationIntensity" type="number" min="20" max="180" value="100"></span></label>
+      </div></details>
+      <details open><summary>ตัวอักษร</summary><div class="inspector-group">
+        <label>ฟอนต์<select id="font"><option>Leelawadee UI</option><option>Tahoma</option><option>Arial</option><option>Arial Black</option><option>Impact</option><option>Segoe UI</option><option>Angsana New</option><option>Browallia New</option><option>Cordia New</option></select></label>
+        <div class="font-import"><input id="fontFile" type="file" accept=".ttf,.otf" hidden><button id="importFont" class="secondary small" type="button">นำเข้า TTF/OTF</button></div>
+        <div class="color-grid"><label>ข้อความ<input id="color" type="color" value="#ffffff"></label><label>ไฮไลต์<input id="highlight" type="color" value="#b8ff38"></label><label>เส้นขอบ<input id="outlineColor" type="color" value="#000000"></label></div>
+        <label>ขนาด <span class="range-pair"><input id="fontSizePct" type="range" min="2" max="14" step="0.1" value="6"><input data-number-for="fontSizePct" type="number" min="2" max="14" step="0.1" value="6"></span></label>
+        <label>ระยะอักษร <span class="range-pair"><input id="spacing" type="range" min="-3" max="16" value="0"><input data-number-for="spacing" type="number" min="-3" max="16" value="0"></span></label>
+        <label>ความกว้าง <span class="range-pair"><input id="scaleX" type="range" min="60" max="160" value="100"><input data-number-for="scaleX" type="number" min="60" max="160" value="100"></span></label>
+        <label class="check"><input id="bold" type="checkbox" checked> ตัวหนา</label><label class="check"><input id="italic" type="checkbox"> ตัวเอียง</label>
+      </div></details>
+      <details><summary>ตำแหน่งและกรอบ</summary><div class="inspector-group">
+        <label>ตำแหน่งจากล่าง <span class="range-pair"><input id="bottomPct" type="range" min="2" max="55" value="12"><input data-number-for="bottomPct" type="number" min="2" max="55" value="12"></span></label>
+        <label>ความกว้างสูงสุด <span class="range-pair"><input id="maxWidthPct" type="range" min="30" max="96" value="90"><input data-number-for="maxWidthPct" type="number" min="30" max="96" value="90"></span></label>
+        <label>ระยะบรรทัด <span class="range-pair"><input id="lineHeight" type="range" min="0.9" max="1.8" step="0.05" value="1.18"><input data-number-for="lineHeight" type="number" min="0.9" max="1.8" step="0.05" value="1.18"></span></label>
+        <label>Safe area <span class="range-pair"><input id="safeAreaPct" type="range" min="0" max="15" value="5"><input data-number-for="safeAreaPct" type="number" min="0" max="15" value="5"></span></label>
+        <label>หมุน <span class="range-pair"><input id="angle" type="range" min="-15" max="15" value="0"><input data-number-for="angle" type="number" min="-15" max="15" value="0"></span></label>
+        <label>จัดตำแหน่ง<select id="align"><option value="2">กลาง</option><option value="1">ซ้าย</option><option value="3">ขวา</option></select></label>
+      </div></details>
+      <details><summary>ขอบ เงา และพื้นหลัง</summary><div class="inspector-group">
+        <label>ความหนาขอบ <span class="range-pair"><input id="outline" type="range" min="0" max="12" value="4"><input data-number-for="outline" type="number" min="0" max="12" value="4"></span></label>
+        <label>เงา <span class="range-pair"><input id="shadow" type="range" min="0" max="10" value="2"><input data-number-for="shadow" type="number" min="0" max="10" value="2"></span></label>
+        <label class="check"><input id="backgroundEnabled" type="checkbox"> กล่องพื้นหลัง</label><label>สีพื้นหลัง<input id="backgroundColor" type="color" value="#000000"></label>
+      </div></details>
+      <div class="exports"><div id="renderProgress" class="render-progress hidden" role="status"><span id="renderLabel">กำลัง Render</span><div class="progress-track"><span id="renderBar"></span></div><button id="cancelRender" class="secondary small" type="button">ยกเลิก Render</button></div><button id="srt" class="secondary" type="button">ดาวน์โหลด SRT</button><button id="render" type="button">Render MP4</button></div>
+    </aside>
+  </section>
+</main>
+<dialog id="candidateDialog"><form method="dialog" class="dialog-card"><h2>ตรวจผลถอดเสียงใหม่</h2><p id="candidateRange"></p><div class="compare-grid"><section><strong>ข้อความเดิม</strong><p id="candidateOld"></p></section><section><strong>ผลใหม่</strong><p id="candidateNew"></p></section></div><div class="dialog-actions"><button value="cancel" class="secondary">ยกเลิก</button><button id="applyCandidate" value="default" type="button">ใช้ผลใหม่</button></div></form></dialog>
+<dialog id="importDialog"><form method="dialog" class="dialog-card"><h2>ตรวจไฟล์คำบรรยาย</h2><p id="importSummary"></p><pre id="importPreview"></pre><div class="dialog-actions"><button value="cancel" class="secondary">ยกเลิก</button><button id="applyImport" value="default" type="button">แทนคำบรรยายปัจจุบัน</button></div></form></dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

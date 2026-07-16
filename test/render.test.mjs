@@ -1,0 +1,10 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import { dialogueLines,makeAss,makeSrt,assEsc } from '../lib/render.mjs';
+const captions=[{id:'c',start:0,end:1,text:'ทดสอบ ซับไทย',words:[{text:'ทดสอบ',start:0,end:.5},{text:'ซับไทย',start:.5,end:1}]}];
+test('ASS uses source resolution and relative font size',()=>{const ass=makeAss({captions,style:{fontSizePct:10},width:1920,height:1080});assert.match(ass,/PlayResX: 1920/);assert.match(ass,/PlayResY: 1080/);assert.match(ass,/Leelawadee UI,108,/)});
+test('ASS escapes override injection',()=>assert.equal(assEsc('{\\evil}'),'（／evil）'));
+test('animations and karaoke are rendered',()=>{assert.match(makeAss({captions,style:{effect:'karaoke',animation:'pop'},width:1080,height:1920}),/\\kf50/);assert.match(makeAss({captions,style:{effect:'sentence',animation:'fade'},width:1080,height:1920}),/\\fad\(180,180\)/)});
+test('SRT keeps Thai and timing',()=>{const srt=makeSrt(captions);assert.match(srt,/00:00:00,000 --> 00:00:01,000/);assert.match(srt,/ทดสอบ ซับไทย/)});
+test('karaoke preserves Thai orthographic spacing',()=>{const joined=[{start:0,end:1,text:'รถม้า',words:[{text:'รถ',start:0,end:.5,spaceBefore:false},{text:'ม้า',start:.5,end:1,spaceBefore:false}]}];const ass=makeAss({captions:joined,style:{effect:'karaoke'},width:1080,height:1920});assert.doesNotMatch(ass,/รถ \{\\kf/)});
+test('sentence animation runs once for the whole caption',()=>{const lines=dialogueLines(captions,{effect:'sentence',animation:'fade'});assert.equal((lines.match(/\\fad\(180,180\)/g)||[]).length,1);assert.equal(lines.split('\n').length,1)});
+test('progressive animation targets only the newly revealed word',()=>{const lines=dialogueLines(captions,{effect:'progressive',animation:'fade'});assert.doesNotMatch(lines,/\\fad\(/);assert.equal((lines.match(/\\alpha&HFF&/g)||[]).length,2);assert.equal(lines.split('\n').length,2)});

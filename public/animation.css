@@ -1,0 +1,19 @@
+.caption-content,
+.word-animate {
+  display: inline-block;
+}
+
+.caption-content.pop,
+.word-animate.pop {
+  animation: pop var(--animation-duration,.22s) ease-out;
+}
+
+.caption-content.bounce,
+.word-animate.bounce {
+  animation: bounce var(--animation-duration,.28s) ease-out;
+}
+
+.caption-content.fade,
+.word-animate.fade {
+  animation: fade var(--animation-duration,.3s) ease-out;
+}
