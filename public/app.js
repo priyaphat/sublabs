@@ -2,46 +2,62 @@ import { captionsFromSubtitle, captionReadStats, reconcileEditedCaption, reflowW
 import { captionVisualState } from './effects.js';
 
 const $=selector=>document.querySelector(selector),$$=selector=>[...document.querySelectorAll(selector)];
-const defaultStyle={effect:'progressive',animation:'pop',animationDuration:220,animationIntensity:100,font:'Leelawadee UI',color:'FFFFFF',highlightColor:'B8FF38',outlineColor:'000000',fontSizePct:6,bottomPct:12,spacing:0,scaleX:100,angle:0,outline:4,shadow:2,align:2,bold:true,italic:false,maxWidthPct:90,lineHeight:1.18,safeAreaPct:5,backgroundEnabled:false,backgroundColor:'000000'};
-let project=null,captions=[],currentStyle={...defaultStyle},history=[],historyIndex=-1,saveTimer,saveRevision=0,saveState='saved',styleTimer,jobId=null,pollTimer,jobStarted=0,lastVisualKey='',lastAnimationKey='',zoom=80,wavePeaks=[],selectedWordIds=new Set(),renderJobId=null,renderPollTimer=null,selectedRange=null,reviewCursor=0,reviewLoop=null,partialJobId=null,partialCandidate=null,pendingImport=null;
+const defaultStyle={effect:'progressive',animation:'pop',animationDuration:220,animationIntensity:100,font:'Leelawadee UI',color:'FFFFFF',highlightColor:'B8FF38',outlineColor:'000000',fontSizePct:6,bottomPct:12,spacing:0,scaleX:100,angle:0,outline:4,shadow:2,align:2,bold:true,italic:false,maxWidthPct:90,lineHeight:1.18,safeAreaPct:5,backgroundEnabled:false,backgroundColor:'000000',cropAspect:'original',cropX:50,cropY:50,cropLeft:0,cropRight:0,cropTop:0,cropBottom:0};
+let project=null,captions=[],currentStyle={...defaultStyle},customStylePresets=[],history=[],historyIndex=-1,saveTimer,saveRevision=0,saveState='saved',styleTimer,jobId=null,pollTimer,jobStarted=0,lastVisualKey='',lastAnimationKey='',zoom=80,wavePeaks=[],selectedWordIds=new Set(),captionDrafts=new Map(),renderJobId=null,renderPollTimer=null,selectedRange=null,reviewCursor=0,reviewLoop=null,partialJobId=null,partialCandidate=null,pendingImport=null,currentMode='captions',entryMode=null,voices=[],dubClips=[],selectedDubId=null,dubJobId=null,dubJobTimer=null,dubExportId=null,dubExportTimer=null,dubAudioContext=null,originalAudioGain=null,dubSources=[],dubBuffers=new Map(),voiceRecorder=null,voiceRecordStream=null,voiceRecordChunks=[],recordedVoiceBlob=null,recordedVoiceDuration=0,voiceRecordTimer=null,voiceRecordStarted=0,voiceRecordUrl=null;
 const toast=message=>{const node=$('#toast');node.textContent=message;node.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>node.classList.remove('show'),3200)};
 const api=async(url,options={})=>{const response=await fetch(url,options);let data;try{data=await response.json()}catch{data=null}if(!response.ok)throw new Error(data?.error||`HTTP ${response.status}`);return data};
 const json=(method,body)=>({method,headers:{'content-type':'application/json'},body:JSON.stringify(body)}),deepCopy=value=>structuredClone(value);
 const joinWords=words=>(words||[]).map((word,index)=>`${index&&word.spaceBefore!==false?' ':''}${word.text}`).join('');
 
-function setSaveState(state,message){saveState=state;const node=$('#saveStatus');node.className=state;node.textContent=message||({dirty:'มีการแก้ไข…',saving:'กำลังบันทึก…',saved:'บันทึกแล้ว',error:'บันทึกไม่สำเร็จ'}[state]||'')}
+function setSaveState(state,message){if(state==='saved'&&captionDrafts.size){state='dirty';message=`มี ${captionDrafts.size} ข้อความยังไม่บันทึก`}saveState=state;const node=$('#saveStatus');node.className=state;node.textContent=message||({dirty:'มีการแก้ไข…',saving:'กำลังบันทึก…',saved:'บันทึกแล้ว',error:'บันทึกไม่สำเร็จ'}[state]||'')}
 function formatDuration(value){const seconds=Math.max(0,Math.round(value||0));return `${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`}
-async function loadRecentProjects(){try{const {projects}=await api('/api/projects'),box=$('#recentProjects');box.replaceChildren(...projects.map(item=>{const row=document.createElement('div');row.className='recent-project';const open=document.createElement('button');open.className='open-project';open.type='button';open.textContent=item.name;open.addEventListener('click',async()=>showProject(await api(`/api/projects/${item.id}`)));const meta=document.createElement('small');meta.textContent=`${item.width}×${item.height} · ${formatDuration(item.duration)} · ${item.captionCount} ชุด`;const remove=document.createElement('button');remove.className='delete-project secondary';remove.type='button';remove.textContent='ลบ';remove.addEventListener('click',async()=>{if(!confirm(`ลบโปรเจกต์ ${item.name}?`))return;await api(`/api/projects/${item.id}`,{method:'DELETE'});loadRecentProjects()});row.append(open,remove,meta);return row}));$('#recentSection').classList.toggle('hidden',!projects.length)}catch{$('#recentSection').classList.add('hidden')}}
+function selectEntryMode(mode){
+  entryMode=mode==='dub'?'dub':'captions';
+  $('#chooseCaptionMode').classList.toggle('selected',entryMode==='captions');$('#chooseCaptionMode').setAttribute('aria-pressed',String(entryMode==='captions'));
+  $('#chooseDubMode').classList.toggle('selected',entryMode==='dub');$('#chooseDubMode').setAttribute('aria-pressed',String(entryMode==='dub'));
+  $('#uploadChoice').classList.remove('disabled');$('#pick').disabled=false;
+  $('#uploadChoiceTitle').textContent=entryMode==='dub'?'เลือกวิดีโอเพื่อเริ่มทำเสียงพากย์':'เลือกวิดีโอเพื่อเริ่มทำซับ';
+  $('#uploadError').textContent='';
+}
+async function openRecentProject(id,mode){selectEntryMode(mode);showProject(await api(`/api/projects/${id}`))}
+async function loadRecentProjects(){try{const {projects}=await api('/api/projects'),box=$('#recentProjects');box.replaceChildren(...projects.map(item=>{const row=document.createElement('div');row.className='recent-project';const title=document.createElement('span');title.className='project-title';title.textContent=item.name;const captionsButton=document.createElement('button');captionsButton.className='open-project secondary';captionsButton.type='button';captionsButton.textContent='ทำซับ';captionsButton.addEventListener('click',()=>openRecentProject(item.id,'captions').catch(error=>toast(error.message)));const dubButton=document.createElement('button');dubButton.className='open-project secondary';dubButton.type='button';dubButton.textContent='ทำเสียง';dubButton.addEventListener('click',()=>openRecentProject(item.id,'dub').catch(error=>toast(error.message)));const meta=document.createElement('small');meta.textContent=`${item.width}×${item.height} · ${formatDuration(item.duration)} · ${item.captionCount} ชุด`;const remove=document.createElement('button');remove.className='delete-project secondary';remove.type='button';remove.textContent='ลบ';remove.addEventListener('click',async()=>{if(!confirm(`ลบโปรเจกต์ ${item.name}?`))return;await api(`/api/projects/${item.id}`,{method:'DELETE'});loadRecentProjects()});row.append(title,captionsButton,dubButton,remove,meta);return row}));$('#recentSection').classList.toggle('hidden',!projects.length)}catch{$('#recentSection').classList.add('hidden')}}
 
-async function upload(file){
-  if(!file)return;$('#uploadError').textContent='';if(file.size>2*1024**3){$('#uploadError').textContent='ไฟล์ใหญ่เกิน 2GB';return}
-  const form=new FormData();form.append('video',file);$('#pick').disabled=true;toast('กำลังตรวจสอบวิดีโอ…');
+async function upload(input){
+  const files=Array.from(input||[]);if(!entryMode){$('#uploadError').textContent='กรุณาเลือกทำซับหรือทำเสียงก่อน';return}if(!files.length)return;$('#uploadError').textContent='';if(files.length>20){$('#uploadError').textContent='เลือกได้สูงสุด 20 คลิปต่อโปรเจกต์';return}if(files.reduce((sum,file)=>sum+file.size,0)>2*1024**3){$('#uploadError').textContent='ไฟล์รวมใหญ่เกิน 2GB';return}
+  const list=$('#uploadFiles');list.classList.remove('hidden');list.textContent=files.map((file,index)=>`${index+1}. ${file.name}`).join('  →  ');
+  const form=new FormData();for(const file of files)form.append('videos',file);$('#pick').disabled=true;toast(files.length>1?`กำลังเตรียมและต่อ ${files.length} คลิป…`:'กำลังตรวจสอบวิดีโอ…');
   try{const created=await api('/api/projects',{method:'POST',body:form});showProject(created)}catch(error){$('#uploadError').textContent=error.message}finally{$('#pick').disabled=false}
 }
 function migrateProject(value){return{...value,schemaVersion:3,captions:(value.captions||[]).map(caption=>({...caption,words:(caption.words||[]).map(word=>({...word,rawConfidence:word.rawConfidence??word.confidence??null,reviewScore:word.reviewScore??null,needsReview:Boolean(word.needsReview),reviewStatus:['pending','approved','edited'].includes(word.reviewStatus)?word.reviewStatus:(word.needsReview?'pending':'approved'),timingSource:['whisper','estimated','manual'].includes(word.timingSource)?word.timingSource:'whisper'}))}))}}
-function showProject(value){project=migrateProject(value);captions=project.captions;selectedWordIds.clear();currentStyle={...defaultStyle,...project.style};$('#projectName').textContent=project.name;$('#projectBar').classList.remove('hidden');setSaveState('saved');applyStyleToControls();$('#video').src=project.mediaUrl;$('#videoFrame').style.aspectRatio=`${project.width}/${project.height}`;const codes={thai:'th',english:'en'};$('#lang').value=codes[String(project.language).toLowerCase()]||project.language||'th';$('#wordCount').value=String(project.wordsPerCaption||5);$('#drop').classList.add('hidden');$('#studio').classList.remove('hidden');window.history.replaceState({},'',`/?project=${project.id}`);resetHistory();drawCaptions();drawTimeline();buildWaveform()}
-function goHome(){$('#video').pause();$('#studio').classList.add('hidden');$('#drop').classList.remove('hidden');$('#projectBar').classList.add('hidden');window.history.replaceState({},'',location.pathname);project=null;captions=[];loadRecentProjects()}
-$('#backHome').addEventListener('click',goHome);$('#pick').addEventListener('click',()=>$('#file').click());$('#file').addEventListener('change',event=>upload(event.target.files[0]));
+function showProject(value){project=migrateProject(value);captions=project.captions;selectedWordIds.clear();captionDrafts.clear();currentStyle={...defaultStyle,...project.style};$('#projectName').textContent=project.name;$('#projectBar').classList.remove('hidden');setSaveState('saved');applyStyleToControls();$('#video').src=project.mediaUrl;const codes={thai:'th',english:'en'};$('#lang').value=codes[String(project.language).toLowerCase()]||project.language||'th';$('#wordCount').value=String(project.wordsPerCaption||5);$('#dubPronunciations').value=(project.dubPronunciations||[]).map(rule=>`${rule.from} = ${rule.to}`).join('\n');$('#drop').classList.add('hidden');$('#studio').classList.remove('hidden');resetHistory();drawCaptions();drawTimeline();buildWaveform();requestAnimationFrame(updatePreviewStyle)}
+function goHome(){$('#video').pause();$('#studio').classList.add('hidden');$('#drop').classList.remove('hidden');$('#projectBar').classList.add('hidden');window.history.replaceState({},'',location.pathname);project=null;captions=[];captionDrafts.clear();loadRecentProjects()}
+$('#backHome').addEventListener('click',goHome);$('#chooseCaptionMode').addEventListener('click',()=>selectEntryMode('captions'));$('#chooseDubMode').addEventListener('click',()=>selectEntryMode('dub'));$('#pick').addEventListener('click',()=>$('#file').click());$('#file').addEventListener('change',event=>upload(event.target.files));
 for(const name of ['dragenter','dragover'])$('#drop').addEventListener(name,event=>{event.preventDefault();$('#drop').classList.add('drag')});
-$('#drop').addEventListener('dragleave',()=>$('#drop').classList.remove('drag'));$('#drop').addEventListener('drop',event=>{event.preventDefault();$('#drop').classList.remove('drag');upload(event.dataTransfer.files[0])});
+$('#drop').addEventListener('dragleave',()=>$('#drop').classList.remove('drag'));$('#drop').addEventListener('drop',event=>{event.preventDefault();$('#drop').classList.remove('drag');upload(event.dataTransfer.files)});
 
 function cueNode(caption,index){
-  const row=document.createElement('div');row.className='cue';row.dataset.index=String(index);const time=document.createElement('button');time.type='button';time.className='cue-time secondary';time.textContent=`${caption.start.toFixed(2)}s`;time.addEventListener('click',()=>{$('#video').currentTime=caption.start;$('#video').play().catch(()=>{})});
-  const textarea=document.createElement('textarea');textarea.rows=2;textarea.value=caption.text;textarea.setAttribute('aria-label',`ข้อความซับชุดที่ ${index+1}`);let before=JSON.stringify(captions),committed=caption.text,editTimer;
-  const commit=()=>{const value=textarea.value;if(value===committed)return false;Object.assign(caption,reconcileEditedCaption(caption,value,$('#lang').value));committed=value;saveCaptions();drawTimeline();return true};
-  textarea.addEventListener('focus',()=>before=JSON.stringify(captions));
-  textarea.addEventListener('input',()=>{caption.text=textarea.value;markCaptionsDirty();clearTimeout(editTimer);editTimer=setTimeout(commit,550)});
-  textarea.addEventListener('blur',()=>{clearTimeout(editTimer);commit();if(before!==JSON.stringify(captions))pushHistory();drawCaptions();drawTimeline()});row.append(time,textarea);
-  const review=document.createElement('div'),flagged=(caption.words||[]).filter(word=>word.needsReview).length,hasMachineScore=(caption.words||[]).some(word=>Number.isFinite(word.reviewScore)),hasLegacyScore=(caption.words||[]).some(word=>Number.isFinite(word.rawConfidence));review.className=`cue-confidence ${flagged||hasLegacyScore&&!hasMachineScore?'cue-review':'cue-ok'}`;review.textContent=flagged?`ควรตรวจ ${flagged} คำ`:hasMachineScore?'ไม่พบคำที่ระบบทำเครื่องหมาย':hasLegacyScore?'ผลเดิม · แนะนำถอดใหม่':'แก้ไขแล้วโดยผู้ใช้';row.append(review);return row;
+  const row=document.createElement('div');row.className='cue';row.dataset.index=String(index);row.dataset.captionId=caption.id;const time=document.createElement('button');time.type='button';time.className='cue-time secondary';time.textContent=`${caption.start.toFixed(2)}s`;time.addEventListener('click',()=>{$('#video').currentTime=caption.start;$('#video').play().catch(()=>{})});
+  const textarea=document.createElement('textarea'),draft=captionDrafts.get(caption.id);textarea.rows=2;textarea.value=draft??caption.text;textarea.setAttribute('aria-label',`ข้อความซับชุดที่ ${index+1}`);row.append(time,textarea);
+  const review=document.createElement('div'),flagged=(caption.words||[]).filter(word=>word.needsReview).length,hasMachineScore=(caption.words||[]).some(word=>Number.isFinite(word.reviewScore)),hasLegacyScore=(caption.words||[]).some(word=>Number.isFinite(word.rawConfidence)),reviewText=flagged?`ควรตรวจ ${flagged} คำ`:hasMachineScore?'ไม่พบคำที่ระบบทำเครื่องหมาย':hasLegacyScore?'ผลเดิม · แนะนำถอดใหม่':'แก้ไขแล้วโดยผู้ใช้';review.className=`cue-confidence ${flagged||hasLegacyScore&&!hasMachineScore?'cue-review':'cue-ok'}`;
+  const footer=document.createElement('div'),save=document.createElement('button');footer.className='cue-footer';save.type='button';save.className='cue-save';save.textContent='บันทึก';footer.append(review,save);row.append(footer);
+  const updateDraftState=()=>{
+    const changed=textarea.value!==caption.text;if(changed)captionDrafts.set(caption.id,textarea.value);else captionDrafts.delete(caption.id);
+    row.classList.toggle('cue-unsaved',changed);save.disabled=!changed;review.textContent=changed?'แก้ไขแล้ว · ยังไม่บันทึก':reviewText;if(changed)setSaveState('dirty',`มี ${captionDrafts.size} ข้อความยังไม่บันทึก`);else if(!captionDrafts.size&&saveState==='dirty')setSaveState('saved');
+  };
+  const saveDraft=()=>{
+    const value=textarea.value;if(value===caption.text)return;const before=JSON.stringify(captions);Object.assign(caption,reconcileEditedCaption(caption,value,$('#lang').value));captionDrafts.delete(caption.id);if(before!==JSON.stringify(captions))pushHistory();saveCaptions();drawCaptions();drawTimeline();
+  };
+  textarea.addEventListener('input',updateDraftState);textarea.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault();saveDraft()}});
+  save.addEventListener('click',saveDraft);updateDraftState();return row;
 }
-function drawCaptions(){$('#captions').replaceChildren(...captions.map(cueNode))}
+function drawCaptions(){const ids=new Set(captions.map(caption=>caption.id));for(const id of captionDrafts.keys())if(!ids.has(id))captionDrafts.delete(id);$('#captions').replaceChildren(...captions.map(cueNode))}
 function syncCaptionFromWords(caption){if(!caption.words?.length)return;caption.start=caption.words[0].start;caption.end=caption.words.at(-1).end;caption.text=joinWords(caption.words)}
 function markCaptionsDirty(){clearTimeout(saveTimer);saveRevision++;setSaveState('dirty')}
 function saveCaptions(){if(!project)return;const revision=++saveRevision,projectId=project.id,payload=deepCopy(captions),language=$('#lang').value,wordsPerCaption=+$('#wordCount').value;setSaveState('saving');clearTimeout(saveTimer);saveTimer=setTimeout(async()=>{try{const updated=migrateProject(await api(`/api/projects/${projectId}/captions`,json('PUT',{captions:payload,language,wordsPerCaption})));if(revision!==saveRevision||!project||project.id!==projectId)return;project=updated;captions=project.captions;setSaveState('saved')}catch(error){if(revision!==saveRevision)return;setSaveState('error');toast(error.message)}},350)}
 
 function resetHistory(){history=[deepCopy(captions)];historyIndex=0;updateHistoryButtons()}
 function pushHistory(){history=history.slice(0,historyIndex+1);history.push(deepCopy(captions));if(history.length>60)history.shift();historyIndex=history.length-1;updateHistoryButtons()}
-function restoreHistory(index){if(index<0||index>=history.length)return;historyIndex=index;captions=deepCopy(history[index]);selectedWordIds.clear();drawCaptions();drawTimeline();saveCaptions();updateHistoryButtons()}
+function restoreHistory(index){if(index<0||index>=history.length)return;historyIndex=index;captions=deepCopy(history[index]);selectedWordIds.clear();captionDrafts.clear();drawCaptions();drawTimeline();saveCaptions();updateHistoryButtons()}
 function updateHistoryButtons(){$('#undo').disabled=historyIndex<=0;$('#redo').disabled=historyIndex>=history.length-1}
 $('#undo').addEventListener('click',()=>restoreHistory(historyIndex-1));$('#redo').addEventListener('click',()=>restoreHistory(historyIndex+1));
 
@@ -61,23 +77,70 @@ function splitSelectedWord(){const item=selectedItems()[0];if(!item)return;const
 function mergeSelectedWords(){const items=selectedItems().sort((a,b)=>a.word.start-b.word.start);if(items.length<2||items.some((item,index)=>index&&item.caption!==items[0].caption))return toast('เลือกคำที่ติดกันในชุดเดียวกัน');const caption=items[0].caption,indices=items.map(item=>item.wordIndex).sort((a,b)=>a-b);if(indices.some((value,index)=>index&&value!==indices[index-1]+1))return toast('เลือกเฉพาะคำที่ติดกัน');const members=indices.map(index=>caption.words[index]),merged={...members[0],id:crypto.randomUUID(),text:joinWords(members),end:members.at(-1).end,rawConfidence:null,reviewScore:null,needsReview:false};caption.words.splice(indices[0],members.length,merged);syncCaptionFromWords(caption);selectedWordIds=new Set([merged.id]);pushHistory();saveCaptions();drawCaptions();drawTimeline()}
 $('#nudgeBack').addEventListener('click',()=>nudgeSelection(-.05));$('#nudgeForward').addEventListener('click',()=>nudgeSelection(.05));$('#splitWord').addEventListener('click',splitSelectedWord);$('#mergeWords').addEventListener('click',mergeSelectedWords);
 
-function drawTimeline(){if(!project)return;const width=Math.max($('#timelineScroll').clientWidth,project.duration*zoom+40);$('#timeline').style.width=`${width}px`;$('#wordTrack').replaceChildren(...flattenWords().map(wordBlock));drawWaveform();drawRuler();updateSelectionUi()}
+function drawTimeline(){if(!project)return;const width=Math.max(1,project.duration*zoom);$('#timeline').style.width=`${width}px`;$('#wordTrack').replaceChildren(...flattenWords().map(wordBlock));drawWaveform();drawRuler();updateSelectionUi()}
 function drawRuler(){const canvas=$('#ruler'),width=$('#timeline').clientWidth,ratio=devicePixelRatio||1;heightCanvas(canvas,width,24,ratio);const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);ctx.strokeStyle='#39404a';ctx.fillStyle='#89919c';ctx.font='10px system-ui';const interval=zoom>=160?1:zoom>=70?2:5;for(let second=0;second<=project.duration;second+=interval){const x=second*zoom+.5;ctx.beginPath();ctx.moveTo(x,12);ctx.lineTo(x,24);ctx.stroke();ctx.fillText(`${second}s`,x+3,10)}}
 function heightCanvas(canvas,width,height,ratio){canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);canvas.style.width=`${width}px`;canvas.style.height=`${height}px`}
-$('#zoom').addEventListener('input',()=>{zoom=+$('#zoom').value;$('#zoomValue').textContent=`${zoom} px/s`;drawTimeline()});$('#zoomFit').addEventListener('click',()=>{zoom=Math.max(20,Math.min(240,($('#timelineScroll').clientWidth-40)/Math.max(1,project.duration)));$('#zoom').value=zoom;$('#zoomValue').textContent=`${Math.round(zoom)} px/s`;drawTimeline()});
+$('#zoom').addEventListener('input',()=>{zoom=+$('#zoom').value;$('#zoomValue').textContent=`${zoom} px/s`;drawTimeline()});$('#zoomFit').addEventListener('click',()=>{zoom=Math.max(20,Math.min(240,$('#timelineScroll').clientWidth/Math.max(1,project.duration)));$('#zoom').value=zoom;$('#zoomValue').textContent=`${Math.round(zoom)} px/s`;drawTimeline()});
 async function buildWaveform(){if(!project)return;try{const data=await api(`/api/projects/${project.id}/waveform`);wavePeaks=data.peaks||[];project.speechRegions=data.speechRegions||project.speechRegions||[];drawWaveform()}catch(error){wavePeaks=[];drawWaveform();toast(`สร้าง waveform ไม่สำเร็จ: ${error.message}`)}}
 function drawWaveform(){const canvas=$('#waveform'),width=$('#timeline').clientWidth,height=88,ratio=devicePixelRatio||1;heightCanvas(canvas,width,height,ratio);const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);ctx.clearRect(0,0,width,height);ctx.fillStyle='#b8ff380b';for(const region of project?.speechRegions||[])ctx.fillRect(region.start*zoom,0,(region.end-region.start)*zoom,height);ctx.strokeStyle='#7cae32';ctx.lineWidth=1;ctx.beginPath();if(!wavePeaks.length){ctx.moveTo(0,height/2);ctx.lineTo(width,height/2)}else for(let x=0;x<width;x++){const index=Math.floor(x/width*wavePeaks.length),amp=wavePeaks[index]*height*.46;ctx.moveTo(x,height/2-amp);ctx.lineTo(x,height/2+amp)}ctx.stroke()}
 
 function renderPreview(){const time=$('#video').currentTime,caption=captions.find(value=>time>=value.start&&time<value.end),preview=$('#captionPreview'),state=captionVisualState(caption,time,currentStyle.effect);if(!state){preview.replaceChildren();lastVisualKey='';lastAnimationKey='';return}const {words,activeIndex,visibleEnd,stateIndex,animationIndex,definition}=state,contentKey=`${caption.id}:${currentStyle.effect}:${stateIndex}:${currentStyle.animation}:${currentStyle.highlightColor}:${caption.text}`,animationKey=`${caption.id}:${currentStyle.effect}:${animationIndex}:${currentStyle.animation}`,shouldAnimate=animationIndex>=0&&animationKey!==lastAnimationKey&&currentStyle.animation!=='none';if(contentKey!==lastVisualKey){const content=document.createElement('span');content.className='caption-content';if(definition.show==='active-word'){const span=document.createElement('span');span.textContent=words[activeIndex].text;span.style.color=`#${currentStyle.highlightColor}`;content.append(span)}else if(definition.show==='revealed-words'||currentStyle.effect==='karaoke'){const limit=definition.show==='revealed-words'?visibleEnd:words.length-1;for(let index=0;index<=limit;index++){if(index&&words[index].spaceBefore!==false)content.append(' ');const span=document.createElement('span');span.textContent=words[index].text;if(index===activeIndex)span.style.color=`#${currentStyle.highlightColor}`;if(definition.animate==='new-word'&&index===activeIndex&&shouldAnimate)span.classList.add('word-animate',currentStyle.animation);content.append(span)}}else content.append(caption.text);if(shouldAnimate&&definition.animate!=='new-word')content.classList.add(currentStyle.animation);preview.replaceChildren(content);lastVisualKey=contentKey;lastAnimationKey=animationKey}$$('.cue').forEach((node,index)=>node.classList.toggle('active',captions[index]===caption));const flat=flattenWords();$$('.word-block').forEach((node,index)=>node.classList.toggle('active',flat[index]?.word.start<=time&&flat[index]?.word.end>time))}
 $('#video').addEventListener('timeupdate',()=>{$('#playhead').style.left=`${$('#video').currentTime*zoom}px`;renderPreview()});$('#video').addEventListener('loadedmetadata',()=>{updatePreviewStyle();drawTimeline()});window.addEventListener('resize',()=>{updatePreviewStyle();drawTimeline()});
 
-const controls={effect:'effect',animation:'animation',animationDuration:'animationDuration',animationIntensity:'animationIntensity',font:'font',color:'color',highlightColor:'highlight',outlineColor:'outlineColor',fontSizePct:'fontSizePct',bottomPct:'bottomPct',spacing:'spacing',scaleX:'scaleX',angle:'angle',outline:'outline',shadow:'shadow',align:'align',bold:'bold',italic:'italic',maxWidthPct:'maxWidthPct',lineHeight:'lineHeight',safeAreaPct:'safeAreaPct',backgroundEnabled:'backgroundEnabled',backgroundColor:'backgroundColor'};
+const cropRatios={original:null,'9:16':9/16,'1:1':1,'4:5':4/5,'16:9':16/9};
+function previewCropGeometry(style=currentStyle){
+  const sourceWidth=Number(project?.width)||16,sourceHeight=Number(project?.height)||9,requested=currentMode==='captions'?style.cropAspect:'original',aspect=requested==='free'||cropRatios[requested]?requested:'original';
+  if(aspect==='free'){
+    const left=Math.max(0,Math.min(90,Number(style.cropLeft)||0)),right=Math.max(0,Math.min(90-left,Number(style.cropRight)||0)),top=Math.max(0,Math.min(90,Number(style.cropTop)||0)),bottom=Math.max(0,Math.min(90-top,Number(style.cropBottom)||0)),evenPosition=(value,maximum)=>Math.max(0,Math.min(maximum,Math.floor(value/2)*2)),x=evenPosition(sourceWidth*left/100,sourceWidth-2),y=evenPosition(sourceHeight*top/100,sourceHeight-2),rightEdge=Math.max(x+2,evenPosition(sourceWidth*(100-right)/100,sourceWidth)),bottomEdge=Math.max(y+2,evenPosition(sourceHeight*(100-bottom)/100,sourceHeight)),width=Math.max(2,rightEdge-x),height=Math.max(2,bottomEdge-y);
+    return{aspect,ratio:width/height,sourceWidth,sourceHeight,width,height,x,y,cropLeft:left,cropRight:right,cropTop:top,cropBottom:bottom};
+  }
+  const ratio=cropRatios[aspect]||sourceWidth/sourceHeight,cropX=Math.max(0,Math.min(100,Number(style.cropX)||0)),cropY=Math.max(0,Math.min(100,Number(style.cropY)||0));let width=sourceWidth,height=sourceHeight;if(aspect!=='original'){if(sourceWidth/sourceHeight>ratio)width=Math.max(2,Math.round(sourceHeight*ratio/2)*2);else height=Math.max(2,Math.round(sourceWidth/ratio/2)*2)}
+  const maximumX=Math.max(0,sourceWidth-width),maximumY=Math.max(0,sourceHeight-height),x=Math.max(0,Math.min(maximumX,Math.floor(maximumX*cropX/100/2)*2)),y=Math.max(0,Math.min(maximumY,Math.floor(maximumY*cropY/100/2)*2));
+  return{aspect,ratio:width/height,sourceWidth,sourceHeight,width,height,x,y,cropX,cropY};
+}
+function updateVideoCropPreview(){
+  if(!project)return;const geometry=previewCropGeometry(),frame=$('#videoFrame'),video=$('#video'),preview=$('.preview'),active=geometry.aspect!=='original';
+  frame.style.aspectRatio=`${geometry.width}/${geometry.height}`;frame.classList.toggle('crop-active',active);
+  const availableWidth=Math.max(1,preview.clientWidth-40),availableHeight=Math.max(1,preview.clientHeight-40),scale=Math.min(availableWidth/geometry.sourceWidth,availableHeight/geometry.sourceHeight),frameWidth=geometry.width*scale,frameHeight=geometry.height*scale,frameOffsetX=(geometry.x-(geometry.sourceWidth-geometry.width)/2)*scale,frameOffsetY=(geometry.y-(geometry.sourceHeight-geometry.height)/2)*scale;frame.style.width=`${Math.max(1,frameWidth)}px`;frame.style.height=`${Math.max(1,frameHeight)}px`;frame.style.transform=`translate(${frameOffsetX}px,${frameOffsetY}px)`;
+  video.controls=true;video.style.position='absolute';video.style.width=`${geometry.sourceWidth*scale}px`;video.style.height=`${geometry.sourceHeight*scale}px`;video.style.left=`${-geometry.x*scale}px`;video.style.top=`${-geometry.y*scale}px`;video.style.maxWidth='none';video.style.maxHeight='none';video.style.objectFit='fill';video.style.objectPosition='0 0';
+  $('#cropSummary').textContent=geometry.aspect==='free'?`Free Crop · ${geometry.width} × ${geometry.height}px · บน ${geometry.cropTop}% / ล่าง ${geometry.cropBottom}%`:active?`${geometry.aspect} · ${geometry.width} × ${geometry.height}px`:`ต้นฉบับ · ${project.width} × ${project.height}px`;
+  const free=geometry.aspect==='free';$('#cropPositionControls').classList.toggle('hidden',!active||free);$('#freeCropControls').classList.toggle('hidden',!free);
+}
+const controls={effect:'effect',animation:'animation',animationDuration:'animationDuration',animationIntensity:'animationIntensity',font:'font',color:'color',highlightColor:'highlight',outlineColor:'outlineColor',fontSizePct:'fontSizePct',bottomPct:'bottomPct',spacing:'spacing',scaleX:'scaleX',angle:'angle',outline:'outline',shadow:'shadow',align:'align',bold:'bold',italic:'italic',maxWidthPct:'maxWidthPct',lineHeight:'lineHeight',safeAreaPct:'safeAreaPct',backgroundEnabled:'backgroundEnabled',backgroundColor:'backgroundColor',cropAspect:'cropAspect',cropX:'cropX',cropY:'cropY',cropLeft:'cropLeft',cropRight:'cropRight',cropTop:'cropTop',cropBottom:'cropBottom'};
 function readStyle(){const style={};for(const [key,id] of Object.entries(controls)){const node=$(`#${id}`);style[key]=node.type==='checkbox'?node.checked:node.type==='range'||key==='align'?+node.value:node.type==='color'?node.value.slice(1):node.value}return style}
 function applyStyleToControls(){for(const [key,id] of Object.entries(controls)){const node=$(`#${id}`),value=currentStyle[key];if(value==null)continue;if(node.type==='checkbox')node.checked=Boolean(value);else node.value=node.type==='color'?`#${value}`:value;const number=$(`[data-number-for="${id}"]`);if(number)number.value=value}updatePreviewStyle()}
-function updatePreviewStyle(){currentStyle=readStyle();for(const input of $$('[data-number-for]'))input.value=$(`#${input.dataset.numberFor}`).value;const preview=$('#captionPreview'),height=$('#video').getBoundingClientRect().height||500,intensity=currentStyle.animationIntensity/100;preview.style.fontFamily=`"${currentStyle.font}"`;preview.style.fontSize=`${height*currentStyle.fontSizePct/100}px`;preview.style.bottom=`${currentStyle.bottomPct}%`;preview.style.letterSpacing=`${currentStyle.spacing}px`;preview.style.transform=`scaleX(${currentStyle.scaleX/100}) rotate(${currentStyle.angle}deg)`;preview.style.textAlign=currentStyle.align===1?'left':currentStyle.align===3?'right':'center';preview.style.color=`#${currentStyle.color}`;preview.style.webkitTextStroke=`${currentStyle.outline/2}px #${currentStyle.outlineColor}`;preview.style.textShadow=`0 ${currentStyle.shadow}px ${currentStyle.shadow}px #000`;preview.style.fontWeight=currentStyle.bold?'900':'400';preview.style.fontStyle=currentStyle.italic?'italic':'normal';preview.style.maxWidth=`${currentStyle.maxWidthPct}%`;preview.style.lineHeight=currentStyle.lineHeight;preview.style.backgroundColor=currentStyle.backgroundEnabled?`#${currentStyle.backgroundColor}b8`:'transparent';preview.classList.toggle('background',currentStyle.backgroundEnabled);$('#safeGuide').style.inset=`${currentStyle.safeAreaPct}%`;preview.style.setProperty('--animation-duration',`${currentStyle.animationDuration}ms`);preview.style.setProperty('--pop-start',String(1-.35*intensity));preview.style.setProperty('--pop-over',String(1+.08*intensity));preview.style.setProperty('--bounce-distance',`${25*intensity}px`);preview.style.setProperty('--bounce-start',String(1-.3*intensity));preview.style.setProperty('--bounce-over',String(1+.08*intensity));renderPreview();requestAnimationFrame(()=>{const lineHeight=parseFloat(getComputedStyle(preview).lineHeight)||1,overflow=preview.scrollHeight>lineHeight*2.4;preview.classList.toggle('overflow-warning',overflow);preview.title=overflow?'คำบรรยายอาจเกิน 2 บรรทัด':''});clearTimeout(styleTimer);if(project){setSaveState('saving');styleTimer=setTimeout(()=>api(`/api/projects/${project.id}/style`,json('PUT',{style:{...currentStyle,schemaVersion:2}})).then(()=>setSaveState('saved')).catch(error=>{setSaveState('error');toast(error.message)}),350)}}
-for(const id of Object.values(controls))$(`#${id}`).addEventListener('input',updatePreviewStyle);for(const input of $$('[data-number-for]'))input.addEventListener('input',()=>{const range=$(`#${input.dataset.numberFor}`);range.value=input.value;updatePreviewStyle()});
+function updatePreviewStyle(){currentStyle=readStyle();for(const input of $$('[data-number-for]'))input.value=$(`#${input.dataset.numberFor}`).value;updateVideoCropPreview();const preview=$('#captionPreview'),height=$('#video').getBoundingClientRect().height||500,intensity=currentStyle.animationIntensity/100;preview.style.fontFamily=`"${currentStyle.font}"`;preview.style.fontSize=`${height*currentStyle.fontSizePct/100}px`;preview.style.bottom=`${currentStyle.bottomPct}%`;preview.style.letterSpacing=`${currentStyle.spacing}px`;preview.style.transform=`scaleX(${currentStyle.scaleX/100}) rotate(${currentStyle.angle}deg)`;preview.style.textAlign=currentStyle.align===1?'left':currentStyle.align===3?'right':'center';preview.style.color=`#${currentStyle.color}`;preview.style.webkitTextStroke=`${currentStyle.outline/2}px #${currentStyle.outlineColor}`;preview.style.textShadow=`0 ${currentStyle.shadow}px ${currentStyle.shadow}px #000`;preview.style.fontWeight=currentStyle.bold?'900':'400';preview.style.fontStyle=currentStyle.italic?'italic':'normal';preview.style.maxWidth=`${currentStyle.maxWidthPct}%`;preview.style.lineHeight=currentStyle.lineHeight;preview.style.backgroundColor=currentStyle.backgroundEnabled?`#${currentStyle.backgroundColor}b8`:'transparent';preview.classList.toggle('background',currentStyle.backgroundEnabled);$('#safeGuide').style.inset=`${currentStyle.safeAreaPct}%`;preview.style.setProperty('--animation-duration',`${currentStyle.animationDuration}ms`);preview.style.setProperty('--pop-start',String(1-.35*intensity));preview.style.setProperty('--pop-over',String(1+.08*intensity));preview.style.setProperty('--bounce-distance',`${25*intensity}px`);preview.style.setProperty('--bounce-start',String(1-.3*intensity));preview.style.setProperty('--bounce-over',String(1+.08*intensity));renderPreview();requestAnimationFrame(()=>{const lineHeight=parseFloat(getComputedStyle(preview).lineHeight)||1,overflow=preview.scrollHeight>lineHeight*2.4;preview.classList.toggle('overflow-warning',overflow);preview.title=overflow?'คำบรรยายอาจเกิน 2 บรรทัด':''});clearTimeout(styleTimer);if(project){setSaveState('saving');styleTimer=setTimeout(()=>api(`/api/projects/${project.id}/style`,json('PUT',{style:{...currentStyle,schemaVersion:3}})).then(()=>setSaveState('saved')).catch(error=>{setSaveState('error');toast(error.message)}),350)}}
+function constrainFreeCrop(id){
+  const pairs={cropLeft:'cropRight',cropRight:'cropLeft',cropTop:'cropBottom',cropBottom:'cropTop'},otherId=pairs[id];if(!otherId)return;
+  const input=$(`#${id}`),other=$(`#${otherId}`),maximum=Math.max(0,90-Number(input.value||0));if(Number(other.value)>maximum)other.value=String(maximum);
+  const otherNumber=$(`[data-number-for="${otherId}"]`);if(otherNumber)otherNumber.value=other.value;
+}
+for(const id of Object.values(controls))$(`#${id}`).addEventListener('input',()=>{constrainFreeCrop(id);updatePreviewStyle()});for(const input of $$('[data-number-for]'))input.addEventListener('input',()=>{const id=input.dataset.numberFor,range=$(`#${id}`);range.value=input.value;constrainFreeCrop(id);updatePreviewStyle()});
+$('#resetCrop').addEventListener('click',()=>{currentStyle={...currentStyle,cropAspect:'original',cropX:50,cropY:50,cropLeft:0,cropRight:0,cropTop:0,cropBottom:0};applyStyleToControls()});
 const presets={viral:{effect:'progressive',animation:'pop',font:'Impact',color:'FFFFFF',highlightColor:'FFDD00',fontSizePct:8,outline:6,shadow:3},clean:{effect:'sentence',animation:'fade',font:'Leelawadee UI',color:'FFFFFF',highlightColor:'FFFFFF',fontSizePct:5,outline:2,shadow:1},bold:{effect:'word',animation:'bounce',font:'Arial Black',color:'B8FF38',highlightColor:'FFFFFF',fontSizePct:8.5,outline:6,shadow:2},karaoke:{effect:'karaoke',animation:'none',font:'Tahoma',color:'FFFFFF',highlightColor:'00E5FF',fontSizePct:7,outline:4,shadow:3},news:{effect:'sentence',animation:'fade',font:'Arial Black',color:'FFFFFF',highlightColor:'FF3232',fontSizePct:6,outline:3,shadow:2,backgroundEnabled:true},cinema:{effect:'sentence',animation:'fade',font:'Angsana New',color:'FFFFFF',highlightColor:'D8B36A',fontSizePct:5,outline:1,shadow:3}};
-for(const button of $$('[data-preset]'))button.addEventListener('click',()=>{currentStyle={...currentStyle,...presets[button.dataset.preset]};applyStyleToControls();$$('[data-preset]').forEach(node=>node.classList.toggle('selected',node===button))});$('#resetStyle').addEventListener('click',()=>{currentStyle={...defaultStyle};applyStyleToControls();$$('[data-preset]').forEach(node=>node.classList.remove('selected'))});
+const stylePresetKeys=['effect','animation','animationDuration','animationIntensity','font','color','highlightColor','outlineColor','fontSizePct','bottomPct','spacing','scaleX','angle','outline','shadow','align','bold','italic','maxWidthPct','lineHeight','safeAreaPct','backgroundEnabled','backgroundColor'];
+function clearStylePresetSelection(){$$('[data-preset]').forEach(node=>node.classList.remove('selected'));$$('.custom-style-preset').forEach(node=>node.classList.remove('selected'))}
+function applyStylePreset(style,node){currentStyle={...currentStyle,...style};applyStyleToControls();clearStylePresetSelection();node?.classList.add('selected')}
+function drawCustomStylePresets(){
+  const box=$('#customStylePresets');
+  if(!customStylePresets.length){const empty=document.createElement('small');empty.className='preset-empty';empty.textContent='ยังไม่มี Preset ที่เพิ่มเอง';box.replaceChildren(empty);return}
+  box.replaceChildren(...customStylePresets.map(preset=>{
+    const row=document.createElement('div'),apply=document.createElement('button');row.className='custom-style-preset';row.dataset.presetId=preset.id;apply.type='button';apply.className='apply-custom-preset secondary small';apply.textContent=preset.name;apply.title=`ใช้ Preset ${preset.name}`;apply.addEventListener('click',()=>applyStylePreset(preset.style,row));row.append(apply);
+    if(preset.source==='user'){const remove=document.createElement('button');remove.type='button';remove.className='delete-custom-preset secondary small';remove.textContent='ลบ';remove.setAttribute('aria-label',`ลบ Preset ${preset.name}`);remove.addEventListener('click',async()=>{if(!confirm(`ลบ Preset “${preset.name}”?`))return;remove.disabled=true;try{await api(`/api/style-presets/${preset.id}`,{method:'DELETE'});await loadStylePresets();toast('ลบ Preset แล้ว')}catch(error){remove.disabled=false;toast(error.message)}});row.append(remove)}
+    return row;
+  }))
+}
+async function loadStylePresets(){try{const {presets:values}=await api('/api/style-presets');customStylePresets=values||[];drawCustomStylePresets()}catch(error){toast(error.message)}}
+function currentStylePreset(){return Object.fromEntries(stylePresetKeys.filter(key=>currentStyle[key]!==undefined).map(key=>[key,currentStyle[key]]))}
+async function saveStylePreset(){
+  const input=$('#stylePresetName'),button=$('#saveStylePreset'),name=input.value.replace(/\s+/g,' ').trim();if(!name)return toast('กรุณาตั้งชื่อ Preset');
+  button.disabled=true;
+  try{const created=await api('/api/style-presets',json('POST',{name,style:currentStylePreset()}));input.value='';await loadStylePresets();const row=$(`.custom-style-preset[data-preset-id="${CSS.escape(created.id)}"]`);clearStylePresetSelection();row?.classList.add('selected');toast('เพิ่ม Preset แล้ว')}
+  catch(error){toast(error.message)}finally{button.disabled=false}
+}
+for(const button of $$('[data-preset]'))button.addEventListener('click',()=>applyStylePreset(presets[button.dataset.preset],button));
+$('#saveStylePreset').addEventListener('click',saveStylePreset);$('#stylePresetName').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();saveStylePreset()}});
+$('#resetStyle').addEventListener('click',()=>{currentStyle={...defaultStyle};applyStyleToControls();clearStylePresetSelection()});
 
 async function loadFonts(){try{const {fonts}=await api('/api/fonts');for(const font of fonts)addFont(font)}catch{}}
 function addFont(font){if(![...$('#font').options].some(option=>option.value===font.family)){const option=document.createElement('option');option.value=option.textContent=font.family;$('#font').append(option)}const style=document.createElement('style');style.textContent=`@font-face{font-family:"${font.family.replaceAll('"','')}";src:url("${font.url}")}`;document.head.append(style)}
@@ -119,7 +182,30 @@ $('#reviewPrev').addEventListener('click',()=>focusReview(reviewCursor-1));$('#r
 $('#video').addEventListener('timeupdate',()=>{if(reviewLoop&&!$('#video').paused&&$('#video').currentTime>=reviewLoop.end){$('#video').currentTime=reviewLoop.start;$('#video').play().catch(()=>{})}});
 $('#applyCandidate').addEventListener('click',applyPartialCandidate);$('#candidateDialog').addEventListener('close',()=>{if(!$('#candidateDialog').open){partialCandidate=null}});
 
-const timelineScroll=$('#timelineScroll');timelineScroll.addEventListener('pointerdown',event=>{if(event.button!==0||event.target.closest('.word-block')||!['ruler','waveform','timeline'].includes(event.target.id))return;event.preventDefault();stopReviewLoop();const rect=timelineScroll.getBoundingClientRect(),at=value=>Math.max(0,Math.min(project.duration,(value.clientX-rect.left+timelineScroll.scrollLeft)/zoom)),anchor=at(event);selectedWordIds.clear();selectedRange={start:anchor,end:anchor};timelineScroll.setPointerCapture(event.pointerId);const move=moveEvent=>{const value=at(moveEvent);selectedRange={start:Math.min(anchor,value),end:Math.max(anchor,value)};drawRangeSelection();updateSelectionUi()};const up=upEvent=>{move(upEvent);timelineScroll.removeEventListener('pointermove',move);timelineScroll.removeEventListener('pointerup',up);if(selectedRange.end-selectedRange.start<.08)selectedRange=null;else $('#video').currentTime=selectedRange.start;drawRangeSelection();updateSelectionUi()};timelineScroll.addEventListener('pointermove',move);timelineScroll.addEventListener('pointerup',up)});
+const timelineScroll=$('#timelineScroll');
+timelineScroll.addEventListener('pointerdown',event=>{
+  if(event.button!==0||event.target.closest('.word-block,.dub-block')||!['ruler','waveform','timeline','dubTrack'].includes(event.target.id))return;
+  event.preventDefault();stopReviewLoop();
+  const rect=timelineScroll.getBoundingClientRect(),at=value=>Math.max(0,Math.min(project.duration,(value.clientX-rect.left+timelineScroll.scrollLeft)/zoom)),anchor=at(event),pointerStart=event.clientX;
+  const syncRangeUi=()=>{drawRangeSelection();if(currentMode==='dub')updateDubFormState();else updateSelectionUi()};
+  selectedWordIds.clear();selectedRange={start:anchor,end:anchor};
+  if(currentMode==='dub'){$('#video').currentTime=anchor;$('#playhead').style.left=`${anchor*zoom}px`}
+  syncRangeUi();timelineScroll.setPointerCapture(event.pointerId);
+  const move=moveEvent=>{const value=at(moveEvent);selectedRange={start:Math.min(anchor,value),end:Math.max(anchor,value)};syncRangeUi()};
+  const finish=upEvent=>{
+    move(upEvent);timelineScroll.removeEventListener('pointermove',move);timelineScroll.removeEventListener('pointerup',finish);timelineScroll.removeEventListener('pointercancel',cancel);
+    const dragged=Math.abs(upEvent.clientX-pointerStart)>=3||selectedRange.end-selectedRange.start>=.08;
+    if(!dragged&&currentMode==='dub'){
+      const defaultDuration=Math.min(2,project.duration);let start=anchor,end=Math.min(project.duration,anchor+defaultDuration);
+      if(end-start<Math.min(.2,project.duration)){end=project.duration;start=Math.max(0,end-defaultDuration)}
+      selectedRange={start,end};selectedDubId=null;$('#createDub').textContent='สร้างเสียง 3 Take';drawDubClips();$('#video').currentTime=start;
+    }else if(!dragged){selectedRange=null;$('#video').currentTime=anchor}
+    else{$('#video').currentTime=selectedRange.start;if(currentMode==='dub'){selectedDubId=null;$('#createDub').textContent='สร้างเสียง 3 Take';drawDubClips()}}
+    syncRangeUi();
+  };
+  const cancel=()=>{timelineScroll.removeEventListener('pointermove',move);timelineScroll.removeEventListener('pointerup',finish);timelineScroll.removeEventListener('pointercancel',cancel);selectedRange=null;syncRangeUi()};
+  timelineScroll.addEventListener('pointermove',move);timelineScroll.addEventListener('pointerup',finish);timelineScroll.addEventListener('pointercancel',cancel);
+});
 $('#retryRange').addEventListener('click',()=>{const range=selectedTimeRange();if(range)startTranscription(range)});
 $('#autoReflow').addEventListener('click',()=>{if(!captions.length)return;const words=flattenWords().map(item=>({...item.word,lineBreakBefore:false}));captions=reflowWords(words,{maxWords:+$('#wordCount').value,pauseThreshold:.25,cps:17,maxDuration:4,maxLines:2,maxCharsPerLine:32,language:$('#lang').value});selectedWordIds.clear();selectedRange=null;pushHistory();saveCaptions();drawCaptions();drawTimeline();toast('จัดชุดตามช่วงเงียบและความเร็วอ่านแล้ว')});
 
@@ -129,4 +215,211 @@ $('#applyShift').addEventListener('click',()=>{const milliseconds=Number($('#shi
 
 $('#quality').value=localStorage.getItem('sublabs-quality')||'accurate';$('#quality').addEventListener('change',()=>localStorage.setItem('sublabs-quality',$('#quality').value));
 
-await loadFonts();applyStyleToControls();const savedProject=new URLSearchParams(location.search).get('project');if(savedProject)api(`/api/projects/${savedProject}`).then(showProject).catch(error=>{$('#uploadError').textContent=error.message;goHome()});else loadRecentProjects();
+let dubScheduleRevision=0;
+const voiceStyleLabel=style=>{const voice=voices.find(item=>item.id===style.voiceId);return`${voice?.name||'เสียง'} · ${style.emotion}`};
+function allVoiceStyles(){return voices.flatMap(voice=>voice.styles.map(style=>({...style,voiceId:voice.id,voiceName:voice.name})))}
+function updateVoiceSelect(){
+  const select=$('#dubVoice'),previous=select.value;select.replaceChildren();
+  for(const voice of voices){const group=document.createElement('optgroup');group.label=voice.name;for(const style of voice.styles){const option=document.createElement('option');option.value=style.id;option.textContent=style.emotion;group.append(option)}select.append(group)}
+  if([...select.options].some(option=>option.value===previous))select.value=previous;
+  updateDubFormState();
+}
+function drawVoiceLibrary(){
+  const box=$('#voiceList');box.replaceChildren(...voices.map(voice=>{
+    const card=document.createElement('section');card.className='voice-card';const title=document.createElement('strong');title.textContent=voice.name;card.append(title);
+    for(const style of voice.styles){const row=document.createElement('div');row.className='voice-style-row';const label=document.createElement('span');label.textContent=style.emotion;const remove=document.createElement('button');remove.type='button';remove.className='secondary small';remove.textContent='ลบ';remove.addEventListener('click',async()=>{if(!confirm(`ลบอารมณ์ ${style.emotion}?`))return;try{await api(`/api/voice-styles/${style.id}`,{method:'DELETE'});await loadVoices()}catch(error){toast(error.message)}});const audio=document.createElement('audio');audio.controls=true;audio.preload='none';audio.src=style.previewUrl;row.append(label,remove,audio);card.append(row)}
+    const actions=document.createElement('div');actions.className='action-row';const add=document.createElement('button');add.type='button';add.className='secondary small';add.textContent='เพิ่มอารมณ์';add.addEventListener('click',()=>{clearRecordedVoice();$('#voiceReference').value='';$('#voiceForm').dataset.voiceId=voice.id;$('#voiceName').value=voice.name;$('#voiceName').disabled=true;$('#voiceEmotion').focus();$('#voiceForm button[type=submit]').textContent=`เพิ่มอารมณ์ให้ ${voice.name}`});const removeVoice=document.createElement('button');removeVoice.type='button';removeVoice.className='secondary small';removeVoice.textContent='ลบเสียง';removeVoice.addEventListener('click',async()=>{if(!confirm(`ลบเสียง ${voice.name}?`))return;try{await api(`/api/voices/${voice.id}`,{method:'DELETE'});await loadVoices()}catch(error){toast(error.message)}});actions.append(add,removeVoice);card.append(actions);return card;
+  }));if(!voices.length){const empty=document.createElement('p');empty.className='timeline-help';empty.textContent='ยังไม่มีเสียงในคลัง · เพิ่มเสียงอ้างอิงด้านล่าง';box.append(empty)}
+}
+async function loadVoices(){try{const data=await api('/api/voices');voices=data.voices||[];updateVoiceSelect();drawVoiceLibrary()}catch(error){toast(error.message)}}
+async function loadTtsStatus(){try{const status=await api('/api/tts/status'),notice=$('#ttsNotice');notice.classList.toggle('ready',status.installed);notice.classList.toggle('error',!status.installed);$('#ttsStatus').textContent=status.installed?`พร้อมใช้งาน · ${status.mode?status.mode.toUpperCase():'โมเดลจะโหลดเมื่อสร้างครั้งแรก'}`:'ยังไม่ได้ติดตั้ง · รันคำสั่งด้านล่างใน PowerShell'}catch(error){$('#ttsStatus').textContent=error.message}}
+
+let dubTextPreviewTimer,dubSettingsTimer;
+async function updateDubSpokenPreview(){
+  const text=$('#dubText').value.trim();if(!text||!project){$('#dubSpokenText').textContent='—';return}
+  try{$('#dubSpokenText').textContent=(await api(`/api/projects/${project.id}/dub-pronunciation-preview`,json('POST',{text}))).spokenText}catch{$('#dubSpokenText').textContent=text}
+}
+function scheduleDubSpokenPreview(){clearTimeout(dubTextPreviewTimer);dubTextPreviewTimer=setTimeout(updateDubSpokenPreview,180)}
+async function persistDubPronunciations(showMessage=false){
+  if(!project)return;project=migrateProject(await api(`/api/projects/${project.id}/dub-settings`,json('PUT',{pronunciations:$('#dubPronunciations').value})));scheduleDubSpokenPreview();if(showMessage)toast('บันทึกพจนานุกรมคำอ่านแล้ว');
+}
+function saveDubPronunciations(){
+  if(!project)return;clearTimeout(dubSettingsTimer);dubSettingsTimer=setTimeout(()=>persistDubPronunciations(true).catch(error=>toast(error.message)),450);
+}
+function resetDubForm(){selectedDubId=null;$('#dubText').value='';$('#dubSpeed').value='1';$('#dubPauseBefore').value='0';$('#dubPauseAfter').value='0';$('#dubSpokenText').textContent='—';$('#createDub').textContent='สร้างเสียง 3 Take';selectedRange=null;drawRangeSelection();updateDubFormState();drawDubClips();drawTimeline()}
+function updateDubFormState(){
+  const range=selectedRange,slot=range?range.end-range.start:0,pauseBefore=Number($('#dubPauseBefore').value)||0,pauseAfter=Number($('#dubPauseAfter').value)||0,speechTime=slot-pauseBefore-pauseAfter;
+  const ready=range&&slot>=.2&&speechTime>=.2&&$('#dubText').value.trim()&&$('#dubVoice').value&&!dubJobId;
+  $('#dubRange').value=range?`${range.start.toFixed(2)}–${range.end.toFixed(2)} วินาที · พูดได้ ${Math.max(0,speechTime).toFixed(2)} วิ`:'ลากเลือกช่วงบน timeline';
+  $('#createDub').disabled=!ready;$('#dubCount').textContent=`${dubClips.length} คลิป`;
+}
+function dubCard(clip){
+  const card=document.createElement('article');card.className=`dub-card${clip.id===selectedDubId?' active':''}`;const style=allVoiceStyles().find(item=>item.id===clip.voiceStyleId);
+  const header=document.createElement('header');header.textContent=`${clip.start.toFixed(2)}–${clip.end.toFixed(2)}s · ${style?`${style.voiceName} / ${style.emotion}`:'เสียงที่ถูกลบ'} · ${Number(clip.speed||1).toFixed(2)}× · พัก ${Number(clip.pauseBefore||0).toFixed(1)}/${Number(clip.pauseAfter||0).toFixed(1)}s`;const text=document.createElement('p');text.textContent=clip.text;card.append(header,text);
+  if(clip.fitStatus==='needs_edit'){const warning=document.createElement('div');warning.className='warning';warning.textContent=`ต้องแก้เวลา · เสียงจริง ${Number(clip.actualDuration||0).toFixed(2)}s`;card.append(warning)}
+  if(clip.status==='failed'){const warning=document.createElement('div');warning.className='warning';warning.textContent=clip.error||'สร้างเสียงไม่สำเร็จ';card.append(warning)}
+  if(clip.takes?.length){const takes=document.createElement('div');takes.className='dub-takes';for(const take of clip.takes){const item=document.createElement('section');item.className=`dub-take${take.selected?' selected':''}`;const title=document.createElement('strong');title.textContent=`Take ${take.takeIndex}${take.selected?' · ใช้อยู่':''}`;const audio=document.createElement('audio');audio.controls=true;audio.preload='none';audio.src=take.audioUrl||'';const choose=document.createElement('button');choose.type='button';choose.className=take.selected?'small':'secondary small';choose.textContent=take.selected?'เลือกแล้ว':'ใช้ Take นี้';choose.disabled=take.selected||take.status!=='ready';choose.addEventListener('click',()=>selectDubTake(clip,take));item.append(title,audio,choose);takes.append(item)}card.append(takes)}
+  const footer=document.createElement('footer'),edit=document.createElement('button');edit.type='button';edit.className='secondary';edit.textContent='แก้บท';edit.addEventListener('click',()=>selectDubClip(clip));const play=document.createElement('button');play.type='button';play.className='secondary';play.textContent='เล่น';play.disabled=clip.status!=='ready';play.addEventListener('click',()=>{$('#video').currentTime=clip.start;$('#video').play().catch(()=>{})});const remove=document.createElement('button');remove.type='button';remove.className='secondary';remove.textContent='ลบ';remove.addEventListener('click',()=>deleteDubClip(clip));footer.append(edit,play,remove);card.append(footer);return card;
+}
+function drawDubClips(){$('#dubClips').replaceChildren(...dubClips.map(dubCard));updateDubFormState()}
+function selectDubClip(clip){selectedDubId=clip.id;selectedRange={start:clip.start,end:clip.end};$('#dubText').value=clip.text;$('#dubVoice').value=clip.voiceStyleId;$('#dubSpeed').value=String(clip.speed||1);$('#dubPauseBefore').value=String(clip.pauseBefore||0);$('#dubPauseAfter').value=String(clip.pauseAfter||0);$('#dubSpokenText').textContent=clip.spokenText||clip.text;$('#createDub').textContent='สร้าง 3 Take ใหม่';$('#video').currentTime=clip.start;drawRangeSelection();drawDubClips();drawTimeline();updateDubFormState()}
+async function selectDubTake(clip,take){try{dubBuffers.delete(clip.audioUrl);const result=await api(`/api/dub-clips/${clip.id}/take`,json('PUT',{takeId:take.id}));const index=dubClips.findIndex(item=>item.id===clip.id);if(index>=0)dubClips[index]=result.clip;drawDubClips();drawTimeline();preloadDubBuffers();scheduleDubAudio();toast(`เลือก Take ${take.takeIndex} แล้ว`)}catch(error){toast(error.message)}}
+async function deleteDubClip(clip){if(!confirm('ลบเสียงพากย์ช่วงนี้?'))return;try{await api(`/api/dub-clips/${clip.id}`,{method:'DELETE'});dubBuffers.delete(clip.audioUrl);if(selectedDubId===clip.id)resetDubForm();await loadDubs();scheduleDubAudio()}catch(error){toast(error.message)}}
+function dubBlock(clip){const node=document.createElement('div');node.className=`dub-block ${clip.status}${clip.fitStatus==='needs_edit'?' needs-edit':''}${clip.status==='failed'?' failed':''}${clip.id===selectedDubId?' active':''}`;node.textContent=clip.text;node.style.left=`${clip.start*zoom}px`;node.style.width=`${Math.max(10,(clip.end-clip.start)*zoom)}px`;node.title=`${clip.text} · ${clip.start.toFixed(2)}–${clip.end.toFixed(2)}s`;node.addEventListener('click',()=>selectDubClip(clip));node.addEventListener('dblclick',()=>{$('#video').currentTime=clip.start;$('#video').play().catch(()=>{})});return node}
+function drawDubTrack(){$('#dubTrack').replaceChildren(...dubClips.map(dubBlock))}
+async function loadDubs(){if(!project)return;try{const data=await api(`/api/projects/${project.id}/dubs`);dubClips=data.clips||[];if(selectedDubId&&!dubClips.some(clip=>clip.id===selectedDubId))selectedDubId=null;drawDubClips();drawTimeline();preloadDubBuffers()}catch(error){toast(error.message)}}
+
+function setDubJob(active,label='กำลังสร้างเสียง'){dubJobId=active?dubJobId:null;$('#dubJob').classList.toggle('hidden',!active);$('#dubJobLabel').textContent=label;$('#createDub').disabled=active;updateDubFormState()}
+async function submitDub(){
+  if(!project||dubJobId||!selectedRange)return;
+  const payload={start:selectedRange.start,end:selectedRange.end,text:$('#dubText').value.trim(),voiceStyleId:$('#dubVoice').value,speed:Number($('#dubSpeed').value),pauseBefore:Number($('#dubPauseBefore').value),pauseAfter:Number($('#dubPauseAfter').value)};
+  try{
+    clearTimeout(dubSettingsTimer);await persistDubPronunciations(false);
+    const result=selectedDubId?await api(`/api/dub-clips/${selectedDubId}`,json('PUT',payload)):await api(`/api/projects/${project.id}/dub-clips`,json('POST',payload));
+    if(result.job){dubJobId=result.job.id;setDubJob(true,result.job.label);pollDubJob()}else{toast('บันทึกช่วงเวลาแล้ว');await loadDubs()}
+  }catch(error){toast(error.message)}
+}
+async function pollDubJob(){
+  if(!dubJobId)return;const id=dubJobId;
+  try{const job=await api(`/api/dub-jobs/${id}`);$('#dubJobLabel').textContent=job.label;$('#dubJobBar').style.width=`${job.progress||0}%`;if(job.status==='complete'){dubJobId=null;setDubJob(false);await loadDubs();const clip=job.clip;if(clip?.fitStatus==='needs_edit')toast('สร้าง 3 Take แล้ว แต่เสียงที่เลือกยาวเกินช่วง');else toast(`สร้าง ${job.result?.takeCount||3} Take พร้อมเลือก${job.result?.mode?` · ${String(job.result.mode).toUpperCase()}`:''}`);resetDubForm();scheduleDubAudio();return}if(job.status==='failed'||job.status==='cancelled'){dubJobId=null;setDubJob(false);await loadDubs();toast(job.error||job.label);return}dubJobTimer=setTimeout(pollDubJob,800)}catch(error){dubJobId=null;setDubJob(false);toast(error.message)}
+}
+
+async function ensureDubAudioGraph(){
+  if(!dubAudioContext){dubAudioContext=new AudioContext();const source=dubAudioContext.createMediaElementSource($('#video'));originalAudioGain=dubAudioContext.createGain();source.connect(originalAudioGain).connect(dubAudioContext.destination)}
+  if(dubAudioContext.state==='suspended')await dubAudioContext.resume();
+}
+async function getDubBuffer(url){if(!url)return null;if(dubBuffers.has(url))return dubBuffers.get(url);const promise=fetch(url).then(response=>{if(!response.ok)throw new Error('โหลดเสียงพากย์ไม่ได้');return response.arrayBuffer()}).then(buffer=>dubAudioContext.decodeAudioData(buffer));dubBuffers.set(url,promise);try{return await promise}catch(error){dubBuffers.delete(url);throw error}}
+async function preloadDubBuffers(){if(currentMode!=='dub'||!dubClips.some(clip=>clip.audioUrl))return;try{await ensureDubAudioGraph();await Promise.all(dubClips.filter(clip=>clip.status==='ready'&&clip.audioUrl).map(clip=>getDubBuffer(clip.audioUrl)))}catch{}}
+function stopDubSources(){dubScheduleRevision++;for(const source of dubSources)try{source.stop()}catch{}dubSources=[]}
+async function scheduleDubAudio(){
+  stopDubSources();if(currentMode!=='dub'||$('#video').paused)return;const revision=dubScheduleRevision;
+  try{
+    await ensureDubAudioGraph();const ready=dubClips.filter(clip=>clip.status==='ready'&&clip.audioUrl);await Promise.all(ready.map(clip=>getDubBuffer(clip.audioUrl)));if(revision!==dubScheduleRevision||$('#video').paused||currentMode!=='dub')return;
+    const videoTime=$('#video').currentTime,contextTime=dubAudioContext.currentTime;
+    for(const clip of ready){if(clip.end<=videoTime||clip.start>=project.duration)continue;const buffer=await getDubBuffer(clip.audioUrl),offset=Math.max(0,videoTime-clip.start),delay=Math.max(0,clip.start-videoTime),available=Math.min(buffer.duration-offset,clip.end-Math.max(videoTime,clip.start));if(available<=.01)continue;const source=dubAudioContext.createBufferSource(),gain=dubAudioContext.createGain();gain.gain.value=1;source.buffer=buffer;source.connect(gain).connect(dubAudioContext.destination);source.start(contextTime+delay,offset,available);source.onended=()=>{dubSources=dubSources.filter(item=>item!==source)};dubSources.push(source)}
+  }catch(error){toast(error.message)}
+}
+function updateDubDucking(){if(!originalAudioGain||!dubAudioContext)return;const time=$('#video').currentTime,active=currentMode==='dub'&&dubClips.some(clip=>clip.status==='ready'&&time>=clip.start-.04&&time<clip.end+.08);originalAudioGain.gain.setTargetAtTime(active?.251:1,dubAudioContext.currentTime,active?.08:.18);$$('.dub-block').forEach((node,index)=>node.classList.toggle('active',dubClips[index]?.id===selectedDubId||time>=dubClips[index]?.start&&time<dubClips[index]?.end))}
+
+function setMode(mode){
+  currentMode=mode==='dub'?'dub':'captions';entryMode=currentMode;const dub=currentMode==='dub';$('#projectModeLabel').textContent=dub?'ทำเสียง':'ทำซับ';$('#captionPanel').classList.toggle('hidden',dub);$('#captionStyles').classList.toggle('hidden',dub);$('#dubPanel').classList.toggle('hidden',!dub);$('#dubLibrary').classList.toggle('hidden',!dub);$('#captionEditToolbar').classList.toggle('hidden',dub);$('#captionWorkflowToolbar').classList.toggle('hidden',dub);$('#wordTrack').classList.toggle('hidden',dub);$('#dubTrack').classList.toggle('hidden',!dub);$('#captionPreview').classList.toggle('hidden',dub);$('#safeGuide').classList.toggle('hidden',dub);$('#timelineTitle').textContent=dub?'Dub Timeline':'Word Timeline';$('#timelineHelp').textContent=dub?'คลิกสร้างช่วง 2 วิ · หรือลากเลือกช่วงเอง · คลิกคลิปเพื่อแก้ · Space เล่น/หยุด':'คลิกเลือก · Ctrl+คลิกเลือกหลายคำ · ลากกลางคำเพื่อเลื่อน · ลากขอบเพื่อปรับเวลา · Space เล่น/หยุด';if(!dub){stopVoiceRecording();stopDubSources();if(originalAudioGain&&dubAudioContext)originalAudioGain.gain.setTargetAtTime(1,dubAudioContext.currentTime,.05)}else{loadTtsStatus();preloadDubBuffers();if(!$('#video').paused)scheduleDubAudio()}if(project)window.history.replaceState({},'',`/?project=${project.id}&mode=${currentMode}`);drawTimeline();updateDubFormState();updateVideoCropPreview()
+}
+
+const drawTimelineBeforeDub=drawTimeline;drawTimeline=function(){drawTimelineBeforeDub();if(currentMode==='dub'){drawDubTrack();$('#wordTrack').classList.add('hidden');$('#dubTrack').classList.remove('hidden')}else{$('#wordTrack').classList.remove('hidden');$('#dubTrack').classList.add('hidden')}};
+const updateSelectionBeforeDub=updateSelectionUi;updateSelectionUi=function(){updateSelectionBeforeDub();if(currentMode==='dub')updateDubFormState()};
+const renderPreviewBeforeDub=renderPreview;renderPreview=function(){if(currentMode==='dub'){$('#captionPreview').replaceChildren();return}renderPreviewBeforeDub()};
+const showProjectBeforeDub=showProject;showProject=function(value){showProjectBeforeDub(value);setMode(entryMode||'captions');selectedDubId=null;dubClips=[];Promise.all([loadVoices(),loadDubs(),loadTtsStatus()])};
+
+const voicePromptPools={
+  normal:[
+    'วันนี้อากาศกำลังดีเลย เดี๋ยวเราออกไปหาอะไรอร่อย ๆ กินกันนะ',
+    'เอาล่ะ พร้อมแล้วก็เริ่มกันเลย วันนี้เรามีเรื่องสนุก ๆ ให้ทำอีกเยอะ',
+    'ไม่ต้องรีบร้อน ค่อย ๆ คิดแล้วทำไปทีละอย่าง เดี๋ยวทุกอย่างก็ดีเอง',
+    'เมื่อเช้าฉันแวะซื้อกาแฟร้านเดิม กลิ่นหอมจนคนข้าง ๆ ต้องหันมามอง',
+  ],
+  playful:[
+    'โอ้โห แผนนี้คิดมาดีมาก ดีจนไม่น่าเชื่อว่าจะมีใครกล้าทำจริง ๆ',
+    'ใจเย็นก่อนพ่อหนุ่ม เรื่องแค่นี้ทำหน้าเหมือนโลกจะแตกไปได้',
+    'เก่งมากเลยนะ ถ้าความมั่นใจเอาไปแลกเงินได้ ป่านนี้รวยไปแล้ว',
+    'อันนี้เรียกว่าแผนระดับอัจฉริยะ หรือแค่โชคดีแบบไม่ตั้งใจกันแน่',
+  ],
+  surprised:[
+    'เฮ้ย เดี๋ยวก่อนนะ นั่นมันมาอยู่ตรงนี้ได้ยังไง ใครเป็นคนเอามา',
+    'อะไรนะ พูดใหม่อีกทีสิ เมื่อกี้ฉันไม่ได้ฟังผิดไปใช่ไหม',
+    'โอ้โห นี่มันเกินกว่าที่คิดไว้เยอะมาก ฉันไม่ทันตั้งตัวเลยจริง ๆ',
+    'เดี๋ยวนะ เมื่อกี้ยังอยู่ตรงนี้ แล้วหายไปไหนในพริบตาเดียว',
+  ],
+  serious:[
+    'ฟังให้ดีนะ เรื่องนี้สำคัญมาก เราจะพลาดเป็นครั้งที่สองไม่ได้แล้ว',
+    'ตั้งแต่วินาทีนี้เป็นต้นไป ทุกการตัดสินใจจะมีผลกับพวกเราทุกคน',
+    'ฉันไม่ได้มาที่นี่เพื่อขอร้อง แต่มาเพื่อบอกความจริงที่ทุกคนต้องรู้',
+    'จำเอาไว้ให้ดี โอกาสไม่ได้เข้ามาหาเราบ่อย ๆ และครั้งนี้ต้องทำให้สำเร็จ',
+  ],
+  angry:[
+    'พอได้แล้ว ฉันเตือนตั้งหลายครั้ง ทำไมถึงไม่มีใครยอมฟังกันบ้าง',
+    'อย่าคิดว่าเรื่องนี้จะจบง่าย ๆ ทุกคนต้องรับผิดชอบกับสิ่งที่ทำลงไป',
+    'ฉันให้โอกาสมาตลอด แต่ครั้งนี้มันเกินขอบเขตที่ยอมรับได้แล้ว',
+    'หยุดพูดแล้วฟังให้จบก่อน เรื่องนี้ไม่ใช่เรื่องที่จะเอามาล้อเล่น',
+  ],
+  sad:[
+    'บางครั้งเราก็ต้องยอมรับว่า เรื่องที่ดีที่สุดอาจกลายเป็นเพียงความทรงจำ',
+    'ฉันยังจำวันนั้นได้ดี ทุกอย่างเหมือนเพิ่งเกิดขึ้นเมื่อวานนี้เอง',
+    'ไม่เป็นไรหรอก ถึงวันนี้จะเหนื่อยมาก พรุ่งนี้เราอาจเริ่มต้นใหม่ได้อีกครั้ง',
+    'สุดท้ายแล้วฉันก็เข้าใจว่า บางคนเข้ามาเพื่อสอนให้เรารู้จักการจากลา',
+  ],
+};
+let lastVoicePrompt='';
+function voicePromptCategory(emotion){
+  const value=String(emotion||'').toLowerCase();
+  if(/กวน|ตลก|ขำ|เล่น|ทะเล้น|เจ้าเล่ห์/.test(value))return'playful';
+  if(/ตกใจ|ประหลาดใจ|ตื่นเต้น|ช็อก/.test(value))return'surprised';
+  if(/จริงจัง|เข้ม|นิ่ง|ดุ|เด็ดขาด/.test(value))return'serious';
+  if(/โกรธ|โมโห|เดือด|หงุดหงิด/.test(value))return'angry';
+  if(/เศร้า|เสียใจ|เหงา|อ่อนโยน/.test(value))return'sad';
+  return'normal';
+}
+function syncVoicePrompt(){
+  const text=$('#voiceReferenceText').value.trim();
+  $('#voicePromptText').textContent=text||'กดสุ่มประโยค แล้วอ่านตามข้อความนี้ด้วยน้ำเสียงที่ต้องการ';
+}
+function randomizeVoicePrompt(){
+  if(voiceRecorder?.state==='recording'){toast('กรุณาหยุดอัดเสียงก่อนเปลี่ยนบท');return}
+  if(recordedVoiceBlob)clearRecordedVoice('เปลี่ยนบทแล้ว กรุณาอัดเสียงใหม่ให้ตรงกับข้อความ');
+  const pool=voicePromptPools[voicePromptCategory($('#voiceEmotion').value)]||voicePromptPools.normal;
+  const choices=pool.filter(text=>text!==lastVoicePrompt),text=choices[Math.floor(Math.random()*choices.length)]||pool[0];
+  lastVoicePrompt=text;$('#voiceReferenceText').value=text;syncVoicePrompt();
+}
+function handleVoiceReferenceTextInput(){if(recordedVoiceBlob)clearRecordedVoice('แก้บทแล้ว กรุณาอัดเสียงใหม่ให้ตรงกับข้อความ');syncVoicePrompt()}
+function setVoicePromptEditing(enabled){$('#randomVoicePrompt').disabled=!enabled;$('#voiceReferenceText').readOnly=!enabled;$('#voiceEmotion').readOnly=!enabled}
+
+function clearRecordedVoice(message='เลือกไฟล์ หรืออัดเสียงพูดให้ตรงกับข้อความด้านบน'){
+  recordedVoiceBlob=null;recordedVoiceDuration=0;voiceRecordChunks=[];
+  if(voiceRecordUrl){URL.revokeObjectURL(voiceRecordUrl);voiceRecordUrl=null}
+  const preview=$('#voiceRecordPreview');preview.pause();preview.removeAttribute('src');preview.load();preview.classList.add('hidden');
+  $('#voiceDiscard').classList.add('hidden');$('#voiceRecordTime').textContent='0.0 / 10.0 วิ';$('#voiceRecordStatus').textContent=message;
+}
+function finishVoiceRecorderStream(){if(voiceRecordStream){for(const track of voiceRecordStream.getTracks())track.stop();voiceRecordStream=null}}
+function stopVoiceRecording(){if(voiceRecorder?.state==='recording')voiceRecorder.stop()}
+async function startVoiceRecording(){
+  if(!navigator.mediaDevices?.getUserMedia||typeof MediaRecorder==='undefined'){toast('เบราว์เซอร์นี้ไม่รองรับการอัดเสียงจากไมโครโฟน');return}
+  if(!$('#voiceReferenceText').value.trim())randomizeVoicePrompt();
+  const recordButton=$('#voiceRecord');recordButton.disabled=true;
+  try{
+    clearRecordedVoice();$('#voiceReference').value='';
+    voiceRecordStream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    const mimeType=['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4'].find(type=>MediaRecorder.isTypeSupported(type));
+    voiceRecorder=new MediaRecorder(voiceRecordStream,mimeType?{mimeType}:{});
+    voiceRecordChunks=[];voiceRecordStarted=performance.now();
+    voiceRecorder.addEventListener('dataavailable',event=>{if(event.data.size)voiceRecordChunks.push(event.data)});
+    voiceRecorder.addEventListener('error',event=>{toast(event.error?.message||'อัดเสียงไม่สำเร็จ')});
+    voiceRecorder.addEventListener('stop',()=>{
+      clearInterval(voiceRecordTimer);voiceRecordTimer=null;
+      recordedVoiceDuration=Math.min(9.8,(performance.now()-voiceRecordStarted)/1000);
+      const type=voiceRecorder?.mimeType||voiceRecordChunks[0]?.type||'audio/webm';
+      recordedVoiceBlob=new Blob(voiceRecordChunks,{type});voiceRecorder=null;finishVoiceRecorderStream();
+      $('.voice-recorder').classList.remove('recording');recordButton.disabled=false;$('#voiceStop').disabled=true;setVoicePromptEditing(true);
+      if(recordedVoiceDuration<5){clearRecordedVoice('เสียงสั้นเกินไป กรุณาอัดใหม่ให้ครบอย่างน้อย 5 วินาที');toast('กรุณาอัดเสียงอย่างน้อย 5 วินาที');return}
+      voiceRecordUrl=URL.createObjectURL(recordedVoiceBlob);const preview=$('#voiceRecordPreview');preview.src=voiceRecordUrl;preview.classList.remove('hidden');$('#voiceDiscard').classList.remove('hidden');
+      $('#voiceRecordTime').textContent=`${recordedVoiceDuration.toFixed(1)} / 10.0 วิ`;$('#voiceRecordStatus').textContent='อัดเสร็จแล้ว · ฟังตรวจสอบก่อนเพิ่มเข้าคลังเสียง';
+    },{once:true});
+    voiceRecorder.start(250);setVoicePromptEditing(false);$('.voice-recorder').classList.add('recording');$('#voiceStop').disabled=true;$('#voiceRecordStatus').textContent='กำลังอัด… อ่านบทด้านบนให้ตรงทุกคำด้วยอารมณ์ที่ต้องการ';
+    voiceRecordTimer=setInterval(()=>{const elapsed=Math.min(9.8,(performance.now()-voiceRecordStarted)/1000);$('#voiceRecordTime').textContent=`${elapsed.toFixed(1)} / 10.0 วิ`;$('#voiceStop').disabled=elapsed<5.1;if(elapsed>=9.8)stopVoiceRecording()},100);
+  }catch(error){finishVoiceRecorderStream();recordButton.disabled=false;setVoicePromptEditing(true);$('.voice-recorder').classList.remove('recording');toast(error.name==='NotAllowedError'?'กรุณาอนุญาตใช้ไมโครโฟนก่อนอัดเสียง':error.message)}
+}
+
+async function submitVoice(event){
+  event.preventDefault();if(voiceRecorder?.state==='recording'){toast('กรุณาหยุดอัดเสียงก่อนบันทึก');return}
+  const form=$('#voiceForm'),data=new FormData(form),voiceId=form.dataset.voiceId,button=form.querySelector('button[type=submit]'),file=$('#voiceReference').files[0];
+  if(recordedVoiceBlob){const extension=recordedVoiceBlob.type.includes('ogg')?'ogg':recordedVoiceBlob.type.includes('mp4')?'m4a':'webm';data.set('reference',recordedVoiceBlob,`recorded-reference.${extension}`)}
+  else if(!file){toast('กรุณาเลือกไฟล์หรืออัดเสียงอ้างอิง 5–10 วินาที');return}
+  button.disabled=true;
+  try{await api(voiceId?`/api/voices/${voiceId}/styles`:'/api/voices',{method:'POST',body:data});form.reset();clearRecordedVoice();delete form.dataset.voiceId;$('#voiceName').disabled=false;$('#voiceEmotion').value='ปกติ';button.textContent='เพิ่มเข้าคลังเสียง';randomizeVoicePrompt();await loadVoices();toast(voiceId?'เพิ่มอารมณ์แล้ว':'เพิ่มเสียงเข้าคลังแล้ว')}catch(error){toast(error.message)}finally{button.disabled=false}
+}
+async function startDubExport(){if(!project||dubExportId)return;try{const value=await api(`/api/projects/${project.id}/dub-exports`,json('POST',{}));dubExportId=value.id;$('#dubExportProgress').classList.remove('hidden');$('#exportDub').disabled=true;pollDubExport()}catch(error){toast(error.message)}}
+async function pollDubExport(){if(!dubExportId)return;try{const value=await api(`/api/dub-exports/${dubExportId}`);$('#dubExportLabel').textContent=value.label;$('#dubExportBar').style.width=`${value.progress||0}%`;if(value.status==='complete'){const link=document.createElement('a');link.href=value.downloadUrl;link.click();finishDubExport();toast('วิดีโอพากย์พร้อมดาวน์โหลดแล้ว');return}if(value.status==='failed'||value.status==='cancelled'){toast(value.error||value.label);finishDubExport();return}dubExportTimer=setTimeout(pollDubExport,800)}catch(error){toast(error.message);finishDubExport()}}
+function finishDubExport(){clearTimeout(dubExportTimer);dubExportId=null;$('#dubExportProgress').classList.add('hidden');$('#dubExportBar').style.width='0';$('#exportDub').disabled=false}
+
+$('#dubText').addEventListener('input',()=>{updateDubFormState();scheduleDubSpokenPreview()});$('#dubVoice').addEventListener('change',updateDubFormState);for(const id of ['dubSpeed','dubPauseBefore','dubPauseAfter'])$(`#${id}`).addEventListener('change',updateDubFormState);$('#dubPronunciations').addEventListener('input',saveDubPronunciations);$('#createDub').addEventListener('click',submitDub);$('#cancelDubJob').addEventListener('click',async()=>{if(dubJobId)await api(`/api/dub-jobs/${dubJobId}`,{method:'DELETE'})});$('#voiceForm').addEventListener('submit',submitVoice);$('#randomVoicePrompt').addEventListener('click',randomizeVoicePrompt);$('#voiceReferenceText').addEventListener('input',handleVoiceReferenceTextInput);$('#voiceEmotion').addEventListener('change',randomizeVoicePrompt);$('#voiceRecord').addEventListener('click',startVoiceRecording);$('#voiceStop').addEventListener('click',stopVoiceRecording);$('#voiceDiscard').addEventListener('click',()=>{clearRecordedVoice();$('#voiceReference').value=''});$('#voiceReference').addEventListener('change',event=>{if(event.target.files[0])clearRecordedVoice(`เลือกไฟล์แล้ว · ${event.target.files[0].name}`)});$('#exportDub').addEventListener('click',startDubExport);$('#cancelDubExport').addEventListener('click',async()=>{if(dubExportId)await api(`/api/dub-exports/${dubExportId}`,{method:'DELETE'})});
+$('#video').addEventListener('play',()=>{if(currentMode==='dub')scheduleDubAudio()});$('#video').addEventListener('pause',stopDubSources);$('#video').addEventListener('seeking',stopDubSources);$('#video').addEventListener('seeked',()=>{if(currentMode==='dub'&&!$('#video').paused)scheduleDubAudio()});$('#video').addEventListener('timeupdate',updateDubDucking);$('#backHome').addEventListener('click',()=>{stopVoiceRecording();stopDubSources();dubClips=[]});
+
+randomizeVoicePrompt();await Promise.all([loadFonts(),loadStylePresets()]);applyStyleToControls();const entryParams=new URLSearchParams(location.search),savedProject=entryParams.get('project'),savedMode=entryParams.get('mode');if(savedProject){selectEntryMode(savedMode==='dub'?'dub':'captions');api(`/api/projects/${savedProject}`).then(showProject).catch(error=>{$('#uploadError').textContent=error.message;goHome()})}else loadRecentProjects();

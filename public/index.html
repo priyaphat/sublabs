@@ -11,19 +11,30 @@
 <body>
 <header>
   <div class="brand">SUBLABS <span>LOCAL</span></div>
-  <div id="projectBar" class="project-bar hidden"><button id="backHome" class="icon-button secondary" type="button" title="กลับหน้าโปรเจกต์">←</button><strong id="projectName"></strong><span id="saveStatus" role="status">บันทึกแล้ว</span></div>
+  <div id="projectBar" class="project-bar hidden"><button id="backHome" class="icon-button secondary" type="button" title="กลับหน้าโปรเจกต์">←</button><strong id="projectName"></strong><span id="projectModeLabel" class="project-mode-label">ทำซับ</span><span id="saveStatus" role="status">บันทึกแล้ว</span></div>
   <div class="privacy"><span aria-hidden="true">●</span> ประมวลผลบนเครื่อง · 127.0.0.1</div>
 </header>
 <main>
   <section id="drop" class="drop" aria-labelledby="dropTitle">
-    <input id="file" type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" hidden>
-    <div class="upload-icon" aria-hidden="true">＋</div><h1 id="dropTitle">วางวิดีโอของคุณที่นี่</h1>
-    <p>MP4, MOV, WebM, MKV · สูงสุด 2GB / 4 ชั่วโมง · ไฟล์ไม่ออกจากเครื่อง</p>
-    <button id="pick" type="button">เลือกวิดีโอ</button><p id="uploadError" class="error" role="alert"></p>
+    <input id="file" type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" multiple hidden>
+    <h1 id="dropTitle">วันนี้อยากทำอะไร?</h1>
+    <p>เลือก workspace ก่อนเริ่ม โปรเจกต์และวิดีโอเดียวกันเปิดใช้ได้ทั้งสองโหมด</p>
+    <div class="entry-modes" role="group" aria-label="เลือกโหมดทำงาน">
+      <button id="chooseCaptionMode" class="entry-mode" type="button" data-mode="captions"><span class="entry-mode-icon" aria-hidden="true">CC</span><strong>ทำซับ</strong><small>ถอดเสียง แก้คำ จัดเวลา และแต่งซับ</small></button>
+      <button id="chooseDubMode" class="entry-mode" type="button" data-mode="dub"><span class="entry-mode-icon" aria-hidden="true">◉</span><strong>ทำเสียง</strong><small>เขียนบท เลือกเสียง และพากย์ลงวิดีโอ</small></button>
+    </div>
+    <div id="uploadChoice" class="upload-choice disabled">
+      <div class="upload-icon" aria-hidden="true">＋</div>
+      <strong id="uploadChoiceTitle">เลือกโหมดด้านบนก่อน</strong>
+      <p>เลือกหลายคลิปได้ ระบบจะต่อตามลำดับที่เลือก · รวมไม่เกิน 2GB / 4 ชั่วโมง · ไฟล์ไม่ออกจากเครื่อง</p>
+      <button id="pick" type="button" disabled>เลือกวิดีโอ (หลายไฟล์ได้)</button>
+      <div id="uploadFiles" class="upload-files hidden" aria-live="polite"></div>
+    </div>
+    <p id="uploadError" class="error" role="alert"></p>
     <section id="recentSection" class="recent hidden" aria-labelledby="recentTitle"><h2 id="recentTitle">โปรเจกต์ล่าสุด</h2><div id="recentProjects"></div></section>
   </section>
   <section id="studio" class="studio hidden">
-    <aside class="transcript-panel" aria-label="คำบรรยาย">
+    <aside id="captionPanel" class="transcript-panel" aria-label="คำบรรยาย">
       <div class="panel-head"><h2>คำบรรยาย</h2><div class="history-tools"><button id="undo" type="button" title="Undo (Ctrl+Z)" disabled>↶</button><button id="redo" type="button" title="Redo (Ctrl+Shift+Z)" disabled>↷</button></div></div>
       <div class="transcribe-options">
         <label>ภาษา<select id="lang"><option value="th">ภาษาไทย</option><option value="en">English</option><option value="auto">อัตโนมัติ</option></select></label>
@@ -36,20 +47,56 @@
       <section id="reviewQueue" class="review-queue hidden" aria-label="คิวคำที่ควรตรวจ"><div class="review-head"><strong>ควรตรวจ <span id="reviewCount">0</span> คำ</strong><select id="reviewSpeed" aria-label="ความเร็วเล่นซ้ำ"><option value="1">1×</option><option value="0.75">0.75×</option></select></div><p class="review-hint">แก้คำตรงนี้ได้เลย แล้วกด Enter เพื่อไปคำถัดไป</p><button id="reviewCurrent" class="review-current secondary" type="button" title="ฟังช่วงนี้อีกครั้ง"></button><label class="review-edit-label">แก้คำ<input id="reviewEdit" type="text" maxlength="300" autocomplete="off" spellcheck="true"></label><div class="review-actions"><button id="reviewPrev" class="secondary small" type="button">ก่อนหน้า</button><button id="reviewApprove" type="button">ยืนยันและถัดไป</button><button id="reviewNext" class="secondary small" type="button">ถัดไป</button></div></section>
       <div id="captions" class="captions" aria-live="polite"></div>
     </aside>
+    <aside id="dubPanel" class="transcript-panel dub-panel hidden" aria-label="เสียงพากย์">
+      <div class="panel-head"><h2>เสียงพากย์</h2><span id="dubCount" class="count-pill">0 คลิป</span></div>
+      <div id="ttsNotice" class="tts-notice"><strong>ระบบเสียง Local</strong><p id="ttsStatus">กำลังตรวจสอบ…</p><code>scripts\setup-tts.ps1</code></div>
+      <label class="field">ช่วงที่เลือก<input id="dubRange" type="text" value="ลากเลือกช่วงบน timeline" readonly></label>
+      <label class="field">บทพากย์<textarea id="dubText" rows="4" maxlength="1000" placeholder="พิมพ์ประโยคที่อยากให้ตัวละครพูด"></textarea></label>
+      <div class="spoken-preview"><small>ระบบจะอ่านว่า</small><p id="dubSpokenText">—</p></div>
+      <label class="field">เสียงและอารมณ์<select id="dubVoice"></select></label>
+      <div class="dub-control-grid">
+        <label class="field">ความเร็ว<select id="dubSpeed"><option value="0.85">ช้า 0.85×</option><option value="0.92">ช้านิดหน่อย 0.92×</option><option value="1" selected>ธรรมชาติ 1.00×</option><option value="1.08">เร็วขึ้น 1.08×</option><option value="1.15">เร็ว 1.15×</option></select></label>
+        <label class="field">พักก่อนพูด<select id="dubPauseBefore"><option value="0">ไม่พัก</option><option value="0.2">0.2 วิ</option><option value="0.4">0.4 วิ</option><option value="0.6">0.6 วิ</option><option value="1">1.0 วิ</option></select></label>
+        <label class="field">พักหลังพูด<select id="dubPauseAfter"><option value="0">ไม่พัก</option><option value="0.2">0.2 วิ</option><option value="0.4">0.4 วิ</option><option value="0.6">0.6 วิ</option><option value="1">1.0 วิ</option></select></label>
+      </div>
+      <details class="pronunciation-box"><summary>พจนานุกรมคำอ่าน</summary><label class="field">หนึ่งบรรทัดต่อหนึ่งคำ เช่น SubLabs = ซับแล็บส์<textarea id="dubPronunciations" rows="4" maxlength="4000" placeholder="AI = เอไอ&#10;SubLabs = ซับแล็บส์"></textarea></label><p>ตัวเลขจะถูกแปลงเป็นคำอ่านภาษาไทยให้อัตโนมัติ</p></details>
+      <button id="createDub" type="button" disabled>สร้างเสียง 3 Take</button>
+      <div id="dubJob" class="processing hidden" role="status"><strong id="dubJobLabel">กำลังสร้างเสียง</strong><div class="progress-track"><span id="dubJobBar"></span></div><button id="cancelDubJob" class="secondary small" type="button">ยกเลิก</button></div>
+      <div id="dubClips" class="dub-clips" aria-live="polite"></div>
+    </aside>
     <section class="workspace" aria-label="ตัวอย่างและ timeline">
       <div class="preview"><div id="videoFrame" class="video-frame"><video id="video" controls preload="metadata"></video><div id="safeGuide" class="safe-guide" aria-hidden="true"></div><div id="captionPreview" class="caption-preview" aria-hidden="true"></div></div></div>
       <div class="timeline-toolbar">
-        <strong>Word Timeline</strong>
+        <strong id="timelineTitle">Word Timeline</strong>
         <div class="timeline-actions"><button id="zoomFit" class="secondary small" type="button">พอดีจอ</button><label>Zoom <input id="zoom" type="range" min="20" max="240" value="80"><output id="zoomValue">80 px/s</output></label><label class="check-inline"><input id="snap" type="checkbox" checked> Snap</label></div>
       </div>
-      <div class="edit-toolbar" aria-label="เครื่องมือแก้เวลา"><span id="selectionLabel">ยังไม่ได้เลือกคำ</span><button id="nudgeBack" class="secondary small" type="button" disabled>−50 ms</button><button id="nudgeForward" class="secondary small" type="button" disabled>+50 ms</button><button id="splitWord" class="secondary small" type="button" disabled>แยกคำ</button><button id="mergeWords" class="secondary small" type="button" disabled>รวมคำ</button></div>
-      <div class="workflow-toolbar"><button id="retryRange" class="secondary small" type="button" disabled>ถอดใหม่ช่วงที่เลือก</button><button id="autoReflow" class="secondary small" type="button">จัดชุดอัตโนมัติ</button><input id="subtitleFile" type="file" accept=".srt,.vtt,text/vtt,application/x-subrip" hidden><button id="importSubtitle" class="secondary small" type="button">นำเข้า SRT/VTT</button><label>เลื่อนเวลา <input id="shiftMs" type="number" step="50" value="0" aria-label="เลื่อนเวลามิลลิวินาที"> ms</label><button id="applyShift" class="secondary small" type="button">ใช้</button></div>
-      <div id="timelineScroll" class="timeline-scroll"><div id="timeline" class="timeline"><canvas id="ruler" height="24"></canvas><canvas id="waveform" height="88"></canvas><div id="rangeSelection" class="range-selection hidden"></div><div id="playhead"></div><div id="wordTrack" class="word-track"></div></div></div>
-      <p class="timeline-help">คลิกเลือก · Ctrl+คลิกเลือกหลายคำ · ลากกลางคำเพื่อเลื่อน · ลากขอบเพื่อปรับเวลา · Space เล่น/หยุด</p>
+      <div id="captionEditToolbar" class="edit-toolbar" aria-label="เครื่องมือแก้เวลา"><span id="selectionLabel">ยังไม่ได้เลือกคำ</span><button id="nudgeBack" class="secondary small" type="button" disabled>−50 ms</button><button id="nudgeForward" class="secondary small" type="button" disabled>+50 ms</button><button id="splitWord" class="secondary small" type="button" disabled>แยกคำ</button><button id="mergeWords" class="secondary small" type="button" disabled>รวมคำ</button></div>
+      <div id="captionWorkflowToolbar" class="workflow-toolbar"><button id="retryRange" class="secondary small" type="button" disabled>ถอดใหม่ช่วงที่เลือก</button><button id="autoReflow" class="secondary small" type="button">จัดชุดอัตโนมัติ</button><input id="subtitleFile" type="file" accept=".srt,.vtt,text/vtt,application/x-subrip" hidden><button id="importSubtitle" class="secondary small" type="button">นำเข้า SRT/VTT</button><label>เลื่อนเวลา <input id="shiftMs" type="number" step="50" value="0" aria-label="เลื่อนเวลามิลลิวินาที"> ms</label><button id="applyShift" class="secondary small" type="button">ใช้</button></div>
+      <div id="timelineScroll" class="timeline-scroll"><div id="timeline" class="timeline"><canvas id="ruler" height="24"></canvas><canvas id="waveform" height="88"></canvas><div id="rangeSelection" class="range-selection hidden"></div><div id="playhead"></div><div id="wordTrack" class="word-track"></div><div id="dubTrack" class="dub-track hidden"></div></div></div>
+      <p id="timelineHelp" class="timeline-help">คลิกเลือก · Ctrl+คลิกเลือกหลายคำ · ลากกลางคำเพื่อเลื่อน · ลากขอบเพื่อปรับเวลา · Space เล่น/หยุด</p>
     </section>
-    <aside class="styles" aria-label="Essential Graphics">
+    <aside id="captionStyles" class="styles" aria-label="Essential Graphics">
       <div class="panel-head"><h2>Essential Graphics</h2><button id="resetStyle" class="secondary" type="button">Reset</button></div>
-      <details open><summary>Presets</summary><div class="presets" aria-label="Style presets"><button data-preset="viral">Viral Pop</button><button data-preset="clean">Clean</button><button data-preset="bold">Bold Lime</button><button data-preset="karaoke">Karaoke</button><button data-preset="news">News</button><button data-preset="cinema">Cinema</button></div></details>
+      <details open><summary>Presets</summary>
+        <div class="presets" aria-label="Preset หลัก"><button data-preset="viral">Viral Pop</button><button data-preset="clean">Clean</button><button data-preset="bold">Bold Lime</button><button data-preset="karaoke">Karaoke</button><button data-preset="news">News</button><button data-preset="cinema">Cinema</button></div>
+        <div id="customStylePresets" class="custom-style-presets" aria-label="Preset ที่เพิ่มเอง"></div>
+        <div class="preset-create"><input id="stylePresetName" type="text" maxlength="50" placeholder="ชื่อ Preset ใหม่"><button id="saveStylePreset" class="secondary small" type="button">+ เพิ่ม Preset</button></div>
+      </details>
+      <details open><summary>Crop Video</summary><div class="inspector-group crop-controls">
+        <label>อัตราส่วน<select id="cropAspect"><option value="original">ขนาดต้นฉบับ</option><option value="free">Free Crop</option><option value="9:16">แนวตั้ง 9:16</option><option value="1:1">สี่เหลี่ยม 1:1</option><option value="4:5">โพสต์ 4:5</option><option value="16:9">แนวนอน 16:9</option></select></label>
+        <div id="cropPositionControls" class="crop-subcontrols">
+          <label>ตำแหน่งแนวนอน <span class="range-pair"><input id="cropX" type="range" min="0" max="100" value="50"><input data-number-for="cropX" type="number" min="0" max="100" value="50"></span></label>
+          <label>ตำแหน่งแนวตั้ง <span class="range-pair"><input id="cropY" type="range" min="0" max="100" value="50"><input data-number-for="cropY" type="number" min="0" max="100" value="50"></span></label>
+        </div>
+        <div id="freeCropControls" class="crop-subcontrols hidden">
+          <label>ตัดจากซ้าย <span class="range-pair"><input id="cropLeft" type="range" min="0" max="90" value="0"><input data-number-for="cropLeft" type="number" min="0" max="90" value="0"></span></label>
+          <label>ตัดจากขวา <span class="range-pair"><input id="cropRight" type="range" min="0" max="90" value="0"><input data-number-for="cropRight" type="number" min="0" max="90" value="0"></span></label>
+          <label>ตัดจากบน <span class="range-pair"><input id="cropTop" type="range" min="0" max="90" value="0"><input data-number-for="cropTop" type="number" min="0" max="90" value="0"></span></label>
+          <label>ตัดจากล่าง <span class="range-pair"><input id="cropBottom" type="range" min="0" max="90" value="0"><input data-number-for="cropBottom" type="number" min="0" max="90" value="0"></span></label>
+        </div>
+        <p id="cropSummary" class="crop-summary">ขนาดต้นฉบับ</p>
+        <button id="resetCrop" class="secondary small" type="button">รีเซ็ต Crop</button>
+      </div></details>
       <details open><summary>การแสดงและ Animation</summary><div class="inspector-group">
         <label>รูปแบบการแสดง<select id="effect"><option value="sentence">แสดงทั้งชุด</option><option value="word">Current Word</option><option value="progressive">Progressive Reveal</option><option value="karaoke">Karaoke Highlight</option></select></label>
         <label>Animation<select id="animation"><option value="none">None</option><option value="pop">Pop</option><option value="bounce">Bounce</option><option value="fade">Fade</option></select></label>
@@ -79,6 +126,34 @@
         <label class="check"><input id="backgroundEnabled" type="checkbox"> กล่องพื้นหลัง</label><label>สีพื้นหลัง<input id="backgroundColor" type="color" value="#000000"></label>
       </div></details>
       <div class="exports"><div id="renderProgress" class="render-progress hidden" role="status"><span id="renderLabel">กำลัง Render</span><div class="progress-track"><span id="renderBar"></span></div><button id="cancelRender" class="secondary small" type="button">ยกเลิก Render</button></div><button id="srt" class="secondary" type="button">ดาวน์โหลด SRT</button><button id="render" type="button">Render MP4</button></div>
+    </aside>
+    <aside id="dubLibrary" class="styles dub-library hidden" aria-label="คลังเสียง">
+      <div class="panel-head"><h2>คลังเสียง</h2></div>
+      <p class="license-note">ThonburianTTS · CC BY-NC-SA 4.0 · ใช้ส่วนตัวเท่านั้น</p>
+      <div id="voiceList" class="voice-list"></div>
+      <details open><summary>เพิ่มเสียงใหม่</summary><form id="voiceForm" class="voice-form">
+        <label>ชื่อตัวละคร<input id="voiceName" name="name" maxlength="80" required placeholder="เช่น ลุงจริงจัง"></label>
+        <label>อารมณ์<input id="voiceEmotion" name="emotion" maxlength="40" required value="ปกติ"></label>
+        <div class="voice-prompt">
+          <div class="voice-prompt-head"><strong>บทให้อ่าน</strong><button id="randomVoicePrompt" class="secondary small" type="button">↻ สุ่มประโยคใหม่</button></div>
+          <blockquote id="voicePromptText">กดสุ่มประโยค แล้วอ่านตามข้อความนี้ด้วยน้ำเสียงที่ต้องการ</blockquote>
+          <p>อ่านให้ตรงทุกคำ หากแก้ข้อความด้านล่าง บทให้อ่านจะเปลี่ยนตามอัตโนมัติ</p>
+        </div>
+        <label>ข้อความที่พูดในไฟล์<textarea id="voiceReferenceText" name="referenceText" rows="3" maxlength="1000" required></textarea></label>
+        <label>เสียงอ้างอิง 5–10 วินาที<input id="voiceReference" name="reference" type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.flac"></label>
+        <div class="voice-recorder">
+          <div class="voice-recorder-actions">
+            <button id="voiceRecord" class="secondary" type="button">● อัดเสียงในแอป</button>
+            <button id="voiceStop" class="secondary" type="button" disabled>หยุดอัด</button>
+            <span id="voiceRecordTime" class="record-time">0.0 / 10.0 วิ</span>
+          </div>
+          <p id="voiceRecordStatus">เลือกไฟล์ หรืออัดเสียงพูดให้ตรงกับข้อความด้านบน</p>
+          <audio id="voiceRecordPreview" class="hidden" controls></audio>
+          <button id="voiceDiscard" class="secondary small hidden" type="button">ทิ้งเสียงที่อัด</button>
+        </div>
+        <button type="submit">เพิ่มเข้าคลังเสียง</button>
+      </form></details>
+      <div class="exports"><div id="dubExportProgress" class="render-progress hidden" role="status"><span id="dubExportLabel">กำลังมิกซ์เสียง</span><div class="progress-track"><span id="dubExportBar"></span></div><button id="cancelDubExport" class="secondary small" type="button">ยกเลิก</button></div><button id="exportDub" type="button">Render วิดีโอพากย์</button></div>
     </aside>
   </section>
 </main>

@@ -25,6 +25,8 @@ dist/
 build/
 .cache/
 .nyc_output/
+__pycache__/
+*.pyc
 
 # Temporary media and subtitle artifacts
 *.tmp
