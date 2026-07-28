@@ -15,6 +15,7 @@ import { findWeakSpeechRegions, hypothesesDisagree, markSpeechRegionForReview, r
 import { atempoChain, durationFitStatus, findDubOverlap, parsePronunciationRules, prepareTtsText, validateDubControls, validateDubExport, validateDubRange, validateDubText } from './lib/dub.mjs';
 import { LocalTtsService } from './lib/tts.mjs';
 import { cropFilter, cropGeometry, normalizeCropStyle } from './lib/crop.mjs';
+import { enhancementFilters, fullHdGeometry } from './lib/enhance.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url)),dataDir=process.env.SUBLABS_DATA_DIR?path.resolve(process.env.SUBLABS_DATA_DIR):path.join(root,'data'),uploadDir=path.join(dataDir,'uploads'),outputDir=path.join(dataDir,'outputs'),tempDir=path.join(dataDir,'temp'),fontsDir=path.join(dataDir,'fonts'),voiceDir=path.join(dataDir,'voices'),dubDir=path.join(dataDir,'dubs');
 await Promise.all([uploadDir,outputDir,tempDir,fontsDir,voiceDir,dubDir,path.join(dataDir,'models')].map(dir=>mkdir(dir,{recursive:true})));
@@ -81,7 +82,7 @@ app.get('/api/projects',(_,res)=>res.json({projects:store.list().map(publicProje
 app.delete('/api/projects/:id',async(req,res)=>{const value=store.get(req.params.id);if(!value)return res.status(404).json({error:'ไม่พบโปรเจกต์'});for(const item of store.listExports(value.id))if(item.result_path)await rm(item.result_path,{force:true});for(const file of store.projectDubFiles(value.id))await rm(file,{force:true});store.delete(value.id);await rm(value.file_path,{force:true});res.json({ok:true})});
 app.put('/api/projects/:id/captions',(req,res)=>{try{const p=store.get(req.params.id);if(!p)return res.status(404).json({error:'ไม่พบโปรเจกต์'});const captions=validateCaptions(req.body.captions);res.json(publicProject(store.updateCaptions(p.id,captions,req.body.language||p.language,req.body.wordsPerCaption)))}catch(e){res.status(400).json({error:e.message})}});
 app.put('/api/projects/:id/style',(req,res)=>{const p=store.get(req.params.id);if(!p)return res.status(404).json({error:'ไม่พบโปรเจกต์'});res.json(publicProject(store.updateStyle(p.id,normalizeCropStyle(req.body.style||{}))))});
-const stylePresetKeys=['effect','animation','animationDuration','animationIntensity','font','color','highlightColor','outlineColor','fontSizePct','bottomPct','spacing','scaleX','angle','outline','shadow','align','bold','italic','maxWidthPct','lineHeight','safeAreaPct','backgroundEnabled','backgroundColor'];
+const stylePresetKeys=['effect','animation','animationDuration','animationIntensity','font','color','highlightColor','outlineColor','fontSizePct','bottomPct','spacing','scaleX','angle','outline','shadow','align','bold','italic','maxWidthPct','lineHeight','safeAreaPct','backgroundEnabled','backgroundColor','cropAspect','cropX','cropY','cropLeft','cropRight','cropTop','cropBottom','enhanceFullHd'];
 const stylePresetValues=style=>Object.fromEntries(stylePresetKeys.filter(key=>style&&style[key]!==undefined).map(key=>[key,style[key]]));
 app.get('/api/style-presets',(_,res)=>res.json({presets:store.listStylePresets().map(publicStylePreset)}));
 app.post('/api/style-presets',(req,res)=>{
@@ -298,8 +299,8 @@ async function runExportQueue(){
   const project=store.get(item.project_id),options=JSON.parse(item.options_json||'{}'),assPath=path.join(tempDir,`${exportId}.ass`),out=path.join(outputDir,`${exportId}.mp4`),controller=new AbortController();activeExport={exportId,controller};
   try{
     store.updateExport(exportId,{status:'running',progress:2,label:'กำลังเตรียมคำบรรยาย'});
-    const style=normalizeCropStyle({...project.style,...(options.style||{})}),geometry=cropGeometry(project.width,project.height,style);store.updateStyle(project.id,style);await writeFile(assPath,makeAss({captions:project.captions,style,width:geometry.width,height:geometry.height}),'utf8');
-    const filterPath=assPath.replaceAll('\\','/').replace(':','\\:').replaceAll("'","\\'"),fontPath=fontsDir.replaceAll('\\','/').replace(':','\\:').replaceAll("'","\\'"),videoFilter=[cropFilter(geometry),`ass='${filterPath}':fontsdir='${fontPath}'`].filter(Boolean).join(',');let buffer='',lastProgress=0;
+    const style=normalizeCropStyle({...project.style,...(options.style||{})}),geometry=cropGeometry(project.width,project.height,style),enhance=options.enhanceFullHd===true,target=enhance?fullHdGeometry(geometry.width,geometry.height):{width:geometry.width,height:geometry.height};store.updateStyle(project.id,style);await writeFile(assPath,makeAss({captions:project.captions,style,width:target.width,height:target.height}),'utf8');
+    const filterPath=assPath.replaceAll('\\','/').replace(':','\\:').replaceAll("'","\\'"),fontPath=fontsDir.replaceAll('\\','/').replace(':','\\:').replaceAll("'","\\'"),videoFilter=[cropFilter(geometry),...enhancementFilters(geometry.width,geometry.height,enhance),`ass='${filterPath}':fontsdir='${fontPath}'`].filter(Boolean).join(',');let buffer='',lastProgress=0;
     await runProcess(ffmpegPath,['-y','-i',project.file_path,'-vf',videoFilter,'-c:v','libx264','-preset','fast','-crf','20','-c:a','aac','-b:a','192k','-movflags','+faststart','-progress','pipe:2','-nostats',out],{signal:controller.signal,onStderr:value=>{
       buffer=(buffer+value).slice(-5000);const matches=[...buffer.matchAll(/out_time_(?:ms|us)=(\d+)/g)],raw=Number(matches.at(-1)?.[1]);if(!Number.isFinite(raw))return;const progress=Math.max(4,Math.min(99,Math.round(raw/1e6/project.duration*100)));if(progress>=lastProgress+2){lastProgress=progress;store.updateExport(exportId,{progress,label:`กำลัง Render ${progress}%`})}
     }});
@@ -307,13 +308,13 @@ async function runExportQueue(){
   }catch(error){const cancelled=error?.name==='AbortError'||store.getExport(exportId)?.cancel_requested;await rm(out,{force:true});store.updateExport(exportId,{status:cancelled?'cancelled':'failed',progress:cancelled?0:null,label:cancelled?'ยกเลิกแล้ว':'Render ไม่สำเร็จ',error:cancelled?null:String(error.message||error)})}
   finally{await rm(assPath,{force:true});activeExport=null;setImmediate(runExportQueue)}
 }
-app.post('/api/projects/:id/exports',(req,res)=>{const project=store.get(req.params.id);if(!project)return res.status(404).json({error:'ไม่พบโปรเจกต์'});const id=crypto.randomUUID(),createdAt=new Date().toISOString(),value=store.createExport({id,projectId:project.id,status:'queued',progress:0,label:'อยู่ในคิว Render',createdAt,options:{style:req.body.style||{}}});exportQueue.push(id);setImmediate(runExportQueue);res.status(202).json(publicExport(value))});
+app.post('/api/projects/:id/exports',(req,res)=>{const project=store.get(req.params.id);if(!project)return res.status(404).json({error:'ไม่พบโปรเจกต์'});const id=crypto.randomUUID(),createdAt=new Date().toISOString(),value=store.createExport({id,projectId:project.id,status:'queued',progress:0,label:'อยู่ในคิว Render',createdAt,options:{style:req.body.style||{},enhanceFullHd:req.body.enhanceFullHd===true}});exportQueue.push(id);setImmediate(runExportQueue);res.status(202).json(publicExport(value))});
 app.get('/api/exports/:id',(req,res)=>{const value=store.getExport(req.params.id);if(!value)return res.status(404).json({error:'ไม่พบงาน Render'});res.json(publicExport(value))});
 app.delete('/api/exports/:id',async(req,res)=>{const value=store.getExport(req.params.id);if(!value)return res.status(404).json({error:'ไม่พบงาน Render'});store.updateExport(value.id,{cancel_requested:1,label:'กำลังยกเลิก'});const index=exportQueue.indexOf(value.id);if(index>=0){exportQueue.splice(index,1);store.updateExport(value.id,{status:'cancelled',progress:0,label:'ยกเลิกแล้ว'})}if(activeExport?.exportId===value.id)activeExport.controller.abort();if(value.result_path){await rm(value.result_path,{force:true});store.updateExport(value.id,{status:'cancelled',progress:0,label:'ลบไฟล์ Render แล้ว',result_path:null})}res.status(202).json({ok:true})});
 app.get('/api/exports/:id/download',(req,res)=>{const value=store.getExport(req.params.id),project=value&&store.get(value.project_id);if(!value||!project)return res.status(404).json({error:'ไม่พบงาน Render'});if(value.status!=='complete'||!value.result_path)return res.status(409).json({error:'ไฟล์ยังไม่พร้อม'});res.download(path.basename(value.result_path),`${path.parse(project.name).name}-captioned.mp4`,{root:path.dirname(value.result_path)})});
 
 const dubExportQueue=[];let activeDubExport=null;
-function dubMixArguments(project,clips){
+function dubMixArguments(project,clips,options={}){
   const args=['-y','-i',project.file_path];for(const clip of clips)args.push('-i',clip.audio_path);
   const duration=Number(project.duration).toFixed(4),filters=[],labels=[];
   clips.forEach((clip,index)=>{const label=`dub${index}`,delay=Math.max(0,Math.round(clip.start_time*1000));filters.push(`[${index+1}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=${delay}:all=1,apad=whole_dur=${duration},atrim=duration=${duration}[${label}]`);labels.push(`[${label}]`)});
@@ -324,15 +325,16 @@ function dubMixArguments(project,clips){
     filters.push(`[original][dubkey]sidechaincompress=threshold=0.015:ratio=8:attack=80:release=180[ducked]`);
     filters.push(`[ducked][dubout]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.95[outa]`);
   }else filters.push(`[dubmix]alimiter=limit=0.95[outa]`);
-  return[...args,'-filter_complex',filters.join(';'),'-map','0:v:0','-map','[outa]','-c:v','libx264','-preset','fast','-crf','20','-c:a','aac','-b:a','192k','-t',duration,'-movflags','+faststart'];
+  const videoFilters=enhancementFilters(project.width,project.height,options.enhanceFullHd===true);
+  return[...args,'-filter_complex',filters.join(';'),'-map','0:v:0','-map','[outa]',...(videoFilters.length?['-vf',videoFilters.join(',')]:[]),'-c:v','libx264','-preset','fast','-crf','20','-c:a','aac','-b:a','192k','-t',duration,'-movflags','+faststart'];
 }
 async function runDubExportQueue(){
   if(activeDubExport||!dubExportQueue.length)return;
   const exportId=dubExportQueue.shift(),item=store.getExport(exportId);if(!item||item.cancel_requested)return runDubExportQueue();
-  const project=store.get(item.project_id),out=path.join(outputDir,`${exportId}-dubbed.mp4`),controller=new AbortController();activeDubExport={exportId,controller};
+  const project=store.get(item.project_id),options=JSON.parse(item.options_json||'{}'),out=path.join(outputDir,`${exportId}-dubbed.mp4`),controller=new AbortController();activeDubExport={exportId,controller};
   try{
     const clips=validateDubExport(store.listDubClips(project.id));store.updateExport(exportId,{status:'running',progress:3,label:'กำลังเตรียมเสียงพากย์'});
-    let buffer='',lastProgress=0,args=dubMixArguments(project,clips);args.push('-progress','pipe:2','-nostats',out);
+    let buffer='',lastProgress=0,args=dubMixArguments(project,clips,options);args.push('-progress','pipe:2','-nostats',out);
     await runProcess(ffmpegPath,args,{signal:controller.signal,onStderr:value=>{
       buffer=(buffer+value).slice(-5000);const matches=[...buffer.matchAll(/out_time_(?:ms|us)=(\d+)/g)],raw=Number(matches.at(-1)?.[1]);if(!Number.isFinite(raw))return;const progress=Math.max(4,Math.min(99,Math.round(raw/1e6/project.duration*100)));if(progress>=lastProgress+2){lastProgress=progress;store.updateExport(exportId,{progress,label:`กำลังมิกซ์เสียง ${progress}%`})}
     }});
@@ -344,7 +346,7 @@ app.post('/api/projects/:id/dub-exports',(req,res)=>{
   try{
     const project=store.get(req.params.id);if(!project)return res.status(404).json({error:'ไม่พบโปรเจกต์'});
     validateDubExport(store.listDubClips(project.id));
-    const id=crypto.randomUUID(),createdAt=new Date().toISOString(),value=store.createExport({id,projectId:project.id,status:'queued',progress:0,label:'อยู่ในคิวมิกซ์เสียง',createdAt,options:{kind:'dub',duckDb:-12,attackMs:80,releaseMs:180}});
+    const id=crypto.randomUUID(),createdAt=new Date().toISOString(),value=store.createExport({id,projectId:project.id,status:'queued',progress:0,label:'อยู่ในคิวมิกซ์เสียง',createdAt,options:{kind:'dub',duckDb:-12,attackMs:80,releaseMs:180,enhanceFullHd:req.body.enhanceFullHd===true}});
     dubExportQueue.push(id);setImmediate(runDubExportQueue);res.status(202).json(publicDubExport(value));
   }catch(error){res.status(409).json({error:error.message})}
 });

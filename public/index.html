@@ -125,7 +125,7 @@
         <label>เงา <span class="range-pair"><input id="shadow" type="range" min="0" max="10" value="2"><input data-number-for="shadow" type="number" min="0" max="10" value="2"></span></label>
         <label class="check"><input id="backgroundEnabled" type="checkbox"> กล่องพื้นหลัง</label><label>สีพื้นหลัง<input id="backgroundColor" type="color" value="#000000"></label>
       </div></details>
-      <div class="exports"><div id="renderProgress" class="render-progress hidden" role="status"><span id="renderLabel">กำลัง Render</span><div class="progress-track"><span id="renderBar"></span></div><button id="cancelRender" class="secondary small" type="button">ยกเลิก Render</button></div><button id="srt" class="secondary" type="button">ดาวน์โหลด SRT</button><button id="render" type="button">Render MP4</button></div>
+      <div class="exports"><label class="export-enhance"><input id="enhanceFullHd" type="checkbox"> <span><strong>เพิ่มความชัด Full HD</strong><small>ลดนอยส์ เพิ่มความคม และขยายสูงสุด 1080p</small></span></label><div id="renderProgress" class="render-progress hidden" role="status"><span id="renderLabel">กำลัง Render</span><div class="progress-track"><span id="renderBar"></span></div><button id="cancelRender" class="secondary small" type="button">ยกเลิก Render</button></div><button id="srt" class="secondary" type="button">ดาวน์โหลด SRT</button><button id="render" type="button">Render MP4</button></div>
     </aside>
     <aside id="dubLibrary" class="styles dub-library hidden" aria-label="คลังเสียง">
       <div class="panel-head"><h2>คลังเสียง</h2></div>
@@ -153,7 +153,7 @@
         </div>
         <button type="submit">เพิ่มเข้าคลังเสียง</button>
       </form></details>
-      <div class="exports"><div id="dubExportProgress" class="render-progress hidden" role="status"><span id="dubExportLabel">กำลังมิกซ์เสียง</span><div class="progress-track"><span id="dubExportBar"></span></div><button id="cancelDubExport" class="secondary small" type="button">ยกเลิก</button></div><button id="exportDub" type="button">Render วิดีโอพากย์</button></div>
+      <div class="exports"><label class="export-enhance"><input id="dubEnhanceFullHd" type="checkbox"> <span><strong>เพิ่มความชัด Full HD</strong><small>ลดนอยส์ เพิ่มความคม และขยายสูงสุด 1080p</small></span></label><div id="dubExportProgress" class="render-progress hidden" role="status"><span id="dubExportLabel">กำลังมิกซ์เสียง</span><div class="progress-track"><span id="dubExportBar"></span></div><button id="cancelDubExport" class="secondary small" type="button">ยกเลิก</button></div><button id="exportDub" type="button">Render วิดีโอพากย์</button></div>
     </aside>
   </section>
 </main>
