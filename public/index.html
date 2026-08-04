@@ -28,7 +28,12 @@
       <strong id="uploadChoiceTitle">เลือกโหมดด้านบนก่อน</strong>
       <p>เลือกหลายคลิปได้ ระบบจะต่อตามลำดับที่เลือก · รวมไม่เกิน 2GB / 4 ชั่วโมง · ไฟล์ไม่ออกจากเครื่อง</p>
       <button id="pick" type="button" disabled>เลือกวิดีโอ (หลายไฟล์ได้)</button>
+      <p id="uploadOrderHint" class="upload-order-hint hidden">คลิกชื่อคลิปตามลำดับที่จะต่อ: คลิปแรก → คลิปถัดไป → คลิปสุดท้าย</p>
       <div id="uploadFiles" class="upload-files hidden" aria-live="polite"></div>
+      <div id="uploadOrderActions" class="upload-order-actions hidden">
+        <button id="clearUploadOrder" class="secondary" type="button">ล้างลำดับ</button>
+        <button id="confirmUploadOrder" type="button" disabled>เริ่มนำเข้า</button>
+      </div>
     </div>
     <p id="uploadError" class="error" role="alert"></p>
     <section id="recentSection" class="recent hidden" aria-labelledby="recentTitle"><h2 id="recentTitle">โปรเจกต์ล่าสุด</h2><div id="recentProjects"></div></section>

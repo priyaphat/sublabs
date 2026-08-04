@@ -16,6 +16,7 @@ import { atempoChain, durationFitStatus, findDubOverlap, parsePronunciationRules
 import { LocalTtsService } from './lib/tts.mjs';
 import { cropFilter, cropGeometry, normalizeCropStyle } from './lib/crop.mjs';
 import { enhancementFilters, fullHdGeometry } from './lib/enhance.mjs';
+import { reorderUploadedFilesByName } from './lib/upload-order.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url)),dataDir=process.env.SUBLABS_DATA_DIR?path.resolve(process.env.SUBLABS_DATA_DIR):path.join(root,'data'),uploadDir=path.join(dataDir,'uploads'),outputDir=path.join(dataDir,'outputs'),tempDir=path.join(dataDir,'temp'),fontsDir=path.join(dataDir,'fonts'),voiceDir=path.join(dataDir,'voices'),dubDir=path.join(dataDir,'dubs');
 await Promise.all([uploadDir,outputDir,tempDir,fontsDir,voiceDir,dubDir,path.join(dataDir,'models')].map(dir=>mkdir(dir,{recursive:true})));
@@ -26,7 +27,7 @@ const tts=new LocalTtsService({root,dataDir});
 const app=express();
 app.disable('x-powered-by');
 app.use((_,res,next)=>{res.set({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'"});next()});
-app.use(express.json({limit:'20mb'})); app.use(express.static(path.join(root,'public'))); app.get('/shared/captions.mjs',(_,res)=>res.type('text/javascript').sendFile(path.join(root,'lib','captions.mjs'))); app.use('/media',express.static(dataDir,{fallthrough:false}));
+app.use(express.json({limit:'20mb'})); app.use(express.static(path.join(root,'public'))); app.get('/shared/captions.mjs',(_,res)=>res.type('text/javascript').sendFile(path.join(root,'lib','captions.mjs'))); app.get('/shared/upload-order.mjs',(_,res)=>res.type('text/javascript').sendFile(path.join(root,'lib','upload-order.mjs'))); app.use('/media',express.static(dataDir,{fallthrough:false}));
 const upload=multer({dest:tempDir,limits:{fileSize:2*1024*1024*1024,files:20},fileFilter:(_,file,cb)=>cb(null,/^(video|audio)\//.test(file.mimetype))});
 const fontUpload=multer({dest:tempDir,limits:{fileSize:20*1024*1024,files:1},fileFilter:(_,file,cb)=>cb(null,/\.(ttf|otf)$/i.test(file.originalname))});
 const voiceUpload=multer({dest:tempDir,limits:{fileSize:30*1024*1024,files:1},fileFilter:(_,file,cb)=>cb(null,/^audio\//.test(file.mimetype)||/\.(wav|mp3|m4a|aac|ogg|flac)$/i.test(file.originalname))});
@@ -62,7 +63,8 @@ async function mergeUploadedVideos(files,mediaItems,target){
 }
 
 app.post('/api/projects',upload.fields([{name:'video',maxCount:1},{name:'videos',maxCount:20}]),async(req,res)=>{
-  const files=[...(req.files?.videos||[]),...(req.files?.video||[])];
+  let files=[...(req.files?.videos||[]),...(req.files?.video||[])];
+  try{files=reorderUploadedFilesByName(files,JSON.parse(req.body?.videoOrder||'[]'),repairFilename)}catch{}
   if(!files.length)return res.status(400).json({error:'กรุณาเลือกไฟล์วิดีโอที่รองรับ'});
   try{
     const totalBytes=files.reduce((sum,file)=>sum+file.size,0);
